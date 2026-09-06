@@ -126,3 +126,51 @@ The second is the more dangerous class of bug and is worth remembering at the
 hour-12 gate: a check that cannot fail is worse than no check, because it buys
 false confidence. Every gate check must be able to distinguish a pass from a
 vacuous pass.
+
+
+### 2026-09-07 — AI waypoint follower built (HANDOFF.md §8 Tier 2)
+
+Built now rather than at hour 12, per §8, and it doubles as the proof that the
+circuit is drivable end to end. `npx tsx tools/laptest.ts interlagos 10 3`:
+
+| | result |
+|---|---|
+| 10 AI cars, 3 laps | all 10 finish |
+| lap times | 1:19.6 (fastest) to 1:30.1 (slowest) |
+| off-track | 0.0% - 2.3% per car |
+| stopped | 0.0% |
+
+Tier 2 (6 humans + 4 AI) and Tier 3 (1 human + 9 AI) are both viable now.
+
+Four bugs, all of which produced *confident, wrong* behaviour rather than a
+crash. Recording them because three of the four were sign or model errors that
+looked fine on the wide placeholder oval and only failed on the real circuit:
+
+1. **Steering sign inverted.** The AI steered away from every corner. The wire
+   protocol never defined the sign of `InputMsg.steer`, so it is defined now in
+   CHANGELOG-SHARED.md: positive is RIGHT. The conversion to the physical wheel
+   angle happens in exactly one place, `Car.step()`.
+
+2. **Kinematic pure pursuit.** `delta = atan(2 L sin a / ld)` assumes the tyres
+   do not slip. At 155 km/h it demanded about a quarter of the steering actually
+   needed; the cars tracked wide out of every corner and spent half the lap on
+   the grass while the speed profile and curvature estimates behind it were both
+   perfectly correct. Replaced with a curvature demand plus an understeer term.
+
+3. **Speed profile ignored the friction circle.** The backward pass assumed a
+   flat 1.45 g of braking on corner entry while the same tyres were already
+   carrying most of a g sideways. The car arrived at Ferradura with the rear
+   gone. Now uses a g-g envelope.
+
+4. **Racing line aimed at the outside of every corner.** The inside of a corner
+   has the *same* sign as the curvature; the code negated it. On the 16 m oval
+   this only looked untidy - the AI still ran 0% off-track - so it survived a
+   green test suite. On a 12.5 m Interlagos it was in the barrier every lap.
+
+The pattern worth carrying to the hour-12 gate: the placeholder oval is wide and
+forgiving enough to hide real bugs. A check that passes on the oval has not
+verified anything about Interlagos.
+
+Also fixed: with ten cars the AI drove the speed profile regardless of what was
+in front of it, and four cars DNF'd in a first-lap pile-up. It now lifts for a
+car directly ahead.

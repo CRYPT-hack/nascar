@@ -33,3 +33,17 @@ Additions beyond the letter of §5.4 (`hello`, `ready`, `roster`, `lap`, `pong`,
 schema are untouched — this is a change in what the strings mean, not in the
 contract's shape. Both sides build meshes from the waypoints via
 `buildTrackMeshes()`. Rationale in DECISION-LOG.md.
+
+## 2026-09-07T02:40Z — shared/protocol.ts — no change; steering sign defined
+
+`InputMsg.steer` is `-1..1` per §5.4, but the sign was never specified and both
+halves of the build need to agree. Defined now as:
+
+**positive `steer` turns the car RIGHT**, matching a steering wheel turned
+clockwise. Negative turns left.
+
+No field, type or wire shape changes. The conversion to the physical wheel angle
+(which is positive to the *left*, because rotating the chassis forward vector
+about +Y by a positive angle takes -Z toward -X) happens in exactly one place,
+`Car.step()` in vehicle/car.ts. If a wheel mesh appears to steer the wrong way,
+fix it in the renderer, not by adding a second negation.

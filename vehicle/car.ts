@@ -307,6 +307,17 @@ export class Car {
     return dot(this.body.linvel(), this.forward());
   }
 
+  /**
+   * Steering lock available at a given speed, radians. Exposed so a controller
+   * can convert a geometric steering angle into the -1..1 input the car takes,
+   * instead of guessing a gain.
+   */
+  maxSteerAngle(speed: number): number {
+    const t = this.tuning;
+    const f = clamp(speed / t.steerFalloffSpeed, 0, 1);
+    return t.maxSteerAngle + (t.minSteerAngle - t.maxSteerAngle) * f;
+  }
+
   forward(): V3 {
     return rotate(this.body.rotation(), { x: 0, y: 0, z: -1 });
   }
@@ -354,7 +365,12 @@ export class Car {
     // --- not snap the wheels to full lock in one tick.
     const lockFrac = clamp(speed / t.steerFalloffSpeed, 0, 1);
     const maxSteer = t.maxSteerAngle + (t.minSteerAngle - t.maxSteerAngle) * lockFrac;
-    const targetSteer = input.steer * maxSteer;
+    // STEER SIGN: input.steer is positive to the RIGHT, matching a steering
+    // wheel turned clockwise. `steerAngle` below is the physical wheel angle,
+    // which is positive to the LEFT because rotating the chassis forward vector
+    // about +Y by a positive angle takes -Z toward -X. The negation here is the
+    // single place those two conventions meet - do not add a second one.
+    const targetSteer = -input.steer * maxSteer;
     const maxDelta = t.steerRate * dt;
     this.steerAngle += clamp(targetSteer - this.steerAngle, -maxDelta, maxDelta);
 
