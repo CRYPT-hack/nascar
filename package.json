@@ -1,0 +1,31 @@
+{
+  "name": "interlagos-racer",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "dev": "npm-run-all --parallel dev:server dev:client",
+    "dev:client": "vite",
+    "dev:server": "tsx watch server/index.ts",
+    "server": "tsx server/index.ts",
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit",
+    "track:build": "tsx track/src/build.ts",
+    "loadtest": "tsx tools/loadtest.ts"
+  },
+  "dependencies": {
+    "@dimforge/rapier3d-compat": "0.14.0",
+    "three": "0.169.0",
+    "ws": "8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "22.10.2",
+    "@types/three": "0.169.0",
+    "@types/ws": "8.5.13",
+    "npm-run-all": "4.1.5",
+    "tsx": "4.19.2",
+    "typescript": "5.7.2",
+    "vite": "5.4.11"
+  }
+}
