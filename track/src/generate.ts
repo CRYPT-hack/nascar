@@ -99,7 +99,11 @@ export function generateTrack(spec: CircuitSpec): GenerateResult {
   const loop = rot(pts);
   const heights = rot(rawHeights);
   const widths = rot(rawWidths);
-  const banks = rot(curv).map((k) => clamp(k * BANK_GAIN, -MAX_BANK, MAX_BANK));
+  // Negated: positive curvature has its apex on the right (see section.ts for
+  // the measured convention), and positive banking raises the right-hand side.
+  // Banking a right-hand corner with the right side up is off-camber — it
+  // throws the car off the road instead of holding it on.
+  const banks = rot(curv).map((k) => clamp(-k * BANK_GAIN, -MAX_BANK, MAX_BANK));
 
   // --- 4. Build waypoints in the authoring frame ---------------------------
   const wps: Waypoint[] = loop.map((p, i) => ({

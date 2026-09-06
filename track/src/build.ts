@@ -12,6 +12,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import type { TrackData } from '../../shared/track-schema';
+import { checkTrackGeometry } from './checks';
 import { CIRCUITS } from './circuits';
 import { generateTrack, type Diagnostics } from './generate';
 
@@ -150,10 +151,26 @@ function main(): void {
     writeFileSync(resolve(outDir, `${key}.svg`), planSvg(track, diagnostics.corners));
     report(key, diagnostics);
     if (diagnostics.selfIntersections > 0) failed = true;
+
+    // Geometry is generated on both server and client from this JSON, so it is
+    // verified here rather than discovered at runtime by whoever boots first.
+    const { problems, stats } = checkTrackGeometry(track);
+    console.log(`    collision       ${stats.collisionTris} tris (${stats.collisionRatio} of visual)`);
+    console.log(`    barriers        ${stats.barrierTris} tris`);
+    console.log(`    visual          ${stats.visualTris} tris`);
+    console.log(`    footprint       +/- ${stats.footprintHalfWidth} m to barrier`);
+    console.log(`    gravel run-off  ${stats.gravelPercent}% of edges`);
+    console.log(`    sampler error   ${stats.maxCentreLateral} m lateral, ${stats.maxHeightErr} m height`);
+    if (problems.length) {
+      console.log(`    GEOMETRY PROBLEMS:`);
+      for (const p of problems.slice(0, 12)) console.log(`      - ${p}`);
+      if (problems.length > 12) console.log(`      ... and ${problems.length - 12} more`);
+      failed = true;
+    }
   }
 
   if (failed) {
-    console.error('\nA track crosses itself. Fix the control points before shipping it.');
+    console.error('\nTrack build failed. Do not ship this geometry.');
     process.exitCode = 1;
   }
 }
