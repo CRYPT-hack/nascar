@@ -83,3 +83,46 @@ an explicit struct is far easier to reason about under rollback than one with
 hidden internal state.
 
 Cost if this is wrong: the built-in controller is a drop-in for `stepVehicle()`.
+
+### 2026-09-07 — Vehicle is all-wheel drive, 40/60 front to rear
+
+Rear-wheel drive was built first and measured: traction-limited off the line to
+about 6.2 m/s^2, giving 0-100 km/h in 5.2 s. Four driven wheels gives 2.9 s.
+
+The stronger argument is not the lap time. Ten people who have never played this
+are going to mash the throttle at the same green light. A car that snaps into
+oversteer on corner exit turns the opening lap into a demolition derby, and the
+demo is ten people spinning on the grid.
+
+### 2026-09-07 — Measured vehicle behaviour (baseline)
+
+Recorded so a later change that breaks the car is obvious. `npx tsx
+tools/drivetest.ts interlagos`.
+
+| | measured |
+|---|---|
+| 0-100 km/h | 2.92 s |
+| 0-200 km/h | 8.50 s |
+| top speed | 227 km/h |
+| braking from 227 km/h | 119.7 m, 1.70 g average |
+| skidpad, sustained | 1.31 g at 123 m radius |
+| drop from 6 m at 126 km/h with spin | recovers upright, does not sink |
+| contact at 100 km/h, 1.5 and 6.0 m/s closing | no flip, no launch, both keep running |
+
+Two bugs worth recording because both produced *plausible-looking* output:
+
+1. **Rapier forces are persistent.** `addForce`/`addForceAtPoint` reapply every
+   step until `resetForces()`, they are not per-step accumulators. Without the
+   reset the suspension force compounded and the car was 50 m in the air within
+   two seconds. `Car.step()` now resets forces and torques first.
+
+2. **The first contact test passed while never making contact.** Steering two
+   cars together does not work: speed-sensitive steering means quarter lock at
+   150 km/h barely moves the car, and the two stayed 4.4 m apart for the whole
+   run. The test reported a clean pass. It now imposes closing velocity directly
+   and asserts the gap actually fell below the width of a car.
+
+The second is the more dangerous class of bug and is worth remembering at the
+hour-12 gate: a check that cannot fail is worse than no check, because it buys
+false confidence. Every gate check must be able to distinguish a pass from a
+vacuous pass.
