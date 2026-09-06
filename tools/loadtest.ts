@@ -1,0 +1,298 @@
+/**
+ * Headless load test.  `npx tsx tools/loadtest.ts [clients] [seconds] [track]`
+ *
+ * Covers hour-12 gate checks 1 and 5 (HANDOFF.md §7): the server holds 60 Hz
+ * with real headroom, and its memory is flat.
+ *
+ * The clients are real WebSocket connections speaking the real protocol, and
+ * they drive properly - each runs an AiDriver over a view reconstructed from the
+ * snapshots it receives, which is what a real client does minus the rendering
+ * and the prediction. Clients that sit still would understate the load, because
+ * ten cars parked on the grid generate far fewer contacts than ten cars racing.
+ *
+ * Tick duration is sampled around `room.step()` only, so it measures the
+ * simulation rather than the socket layer or the test harness. The clients hold
+ * no physics world of their own, so their cost here is small.
+ */
+
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+import { WebSocket } from 'ws';
+
+import { CAR_COLORS, INPUT_HZ, PROTOCOL_VERSION, TICK_HZ } from '../shared/constants';
+import type { CarSnap, ClientMsg, ServerMsg, SurfaceKind } from '../shared/protocol';
+import type { TrackData } from '../shared/track-schema';
+import { AI_SKILLS, AiDriver, buildSpeedProfile, type DrivableView } from '../vehicle/ai-driver';
+import { DEFAULT_TUNING } from '../vehicle/car';
+import { clamp, rotate, type Q4, type V3 } from '../vehicle/math3';
+import { TrackQuery } from '../vehicle/track-query';
+import { initPhysics } from '../vehicle/world';
+import { GameServer } from '../server/net';
+
+const here = dirname(fileURLToPath(import.meta.url));
+const PORT = 8099;
+
+/** A DrivableView reconstructed from the last snapshot for one car. */
+class SnapshotView implements DrivableView {
+  private p: V3 = { x: 0, y: 0, z: 0 };
+  private q: Q4 = { x: 0, y: 0, z: 0, w: 1 };
+  private v: V3 = { x: 0, y: 0, z: 0 };
+  private av: V3 = { x: 0, y: 0, z: 0 };
+  surface: SurfaceKind = 'asphalt';
+
+  apply(s: CarSnap): void {
+    this.p = { x: s.p[0], y: s.p[1], z: s.p[2] };
+    this.q = { x: s.q[0], y: s.q[1], z: s.q[2], w: s.q[3] };
+    this.v = { x: s.v[0], y: s.v[1], z: s.v[2] };
+    this.av = { x: s.av[0], y: s.av[1], z: s.av[2] };
+    this.surface = s.surface;
+  }
+
+  position(): V3 {
+    return this.p;
+  }
+  rotation(): Q4 {
+    return this.q;
+  }
+  linvel(): V3 {
+    return this.v;
+  }
+  angvel(): V3 {
+    return this.av;
+  }
+  forward(): V3 {
+    return rotate(this.q, { x: 0, y: 0, z: -1 });
+  }
+  right(): V3 {
+    return rotate(this.q, { x: 1, y: 0, z: 0 });
+  }
+  up(): V3 {
+    return rotate(this.q, { x: 0, y: 1, z: 0 });
+  }
+  get speed(): number {
+    return Math.hypot(this.v.x, this.v.y, this.v.z);
+  }
+  get forwardSpeed(): number {
+    const f = this.forward();
+    return this.v.x * f.x + this.v.y * f.y + this.v.z * f.z;
+  }
+  isInverted(): boolean {
+    return this.up().y < 0.2;
+  }
+  maxSteerAngle(speed: number): number {
+    const t = DEFAULT_TUNING;
+    const f = clamp(speed / t.steerFalloffSpeed, 0, 1);
+    return t.maxSteerAngle + (t.minSteerAngle - t.maxSteerAngle) * f;
+  }
+}
+
+class HeadlessClient {
+  readonly ws: WebSocket;
+  readonly view = new SnapshotView();
+  id = -1;
+  seq = 1;
+  bytes = 0;
+  snaps = 0;
+  rtts: number[] = [];
+  private driver: AiDriver;
+  private others: V3[] = [];
+  private timer: NodeJS.Timeout | null = null;
+
+  constructor(
+    private readonly index: number,
+    q: TrackQuery,
+    profile: Float64Array,
+  ) {
+    this.driver = new AiDriver(q, profile, AI_SKILLS[index % AI_SKILLS.length]!);
+    this.ws = new WebSocket(`ws://127.0.0.1:${PORT}`);
+
+    this.ws.on('open', () => {
+      this.send({
+        t: 'hello',
+        v: PROTOCOL_VERSION,
+        name: `Load${index + 1}`,
+        color: index % CAR_COLORS.length,
+      });
+    });
+
+    this.ws.on('message', (raw) => {
+      this.bytes += (raw as Buffer).length;
+      let msg: ServerMsg;
+      try {
+        msg = JSON.parse(String(raw)) as ServerMsg;
+      } catch {
+        return;
+      }
+      this.onMessage(msg);
+    });
+
+    this.ws.on('error', () => {});
+  }
+
+  private onMessage(msg: ServerMsg): void {
+    switch (msg.t) {
+      case 'welcome':
+        this.id = msg.id;
+        this.send({ t: 'ready', ready: true });
+        this.startSending();
+        break;
+      case 'snap': {
+        this.snaps++;
+        this.others = [];
+        for (const c of msg.cars) {
+          if (c.id === this.id) this.view.apply(c);
+          else this.others.push({ x: c.p[0], y: c.p[1], z: c.p[2] });
+        }
+        break;
+      }
+      case 'pong':
+        this.rtts.push(Date.now() - msg.ts);
+        break;
+      default:
+        break;
+    }
+  }
+
+  private startSending(): void {
+    let n = 0;
+    this.timer = setInterval(() => {
+      if (this.ws.readyState !== 1) return;
+      const input = this.driver.update(this.view, 1 / INPUT_HZ, this.others);
+      this.send({
+        t: 'input',
+        seq: this.seq++,
+        throttle: input.throttle,
+        brake: input.brake,
+        steer: input.steer,
+        handbrake: input.handbrake,
+      });
+      if (++n % INPUT_HZ === 0) this.send({ t: 'ping', ts: Date.now() });
+    }, 1000 / INPUT_HZ);
+  }
+
+  private send(m: ClientMsg): void {
+    if (this.ws.readyState === 1) this.ws.send(JSON.stringify(m));
+  }
+
+  close(): void {
+    if (this.timer) clearInterval(this.timer);
+    this.ws.close();
+  }
+}
+
+// ---------------------------------------------------------------------------
+
+const pct = (arr: number[], p: number): number => {
+  if (arr.length === 0) return 0;
+  const s = [...arr].sort((a, b) => a - b);
+  return s[Math.min(s.length - 1, Math.floor((p / 100) * s.length))]!;
+};
+const f2 = (n: number) => n.toFixed(2);
+const mb = (n: number) => (n / 1024 / 1024).toFixed(1);
+
+async function main(): Promise<void> {
+  const clientCount = Number(process.argv[2] ?? 10);
+  const seconds = Number(process.argv[3] ?? 60);
+  const trackName = process.argv[4] ?? 'interlagos';
+
+  await initPhysics();
+  const track = JSON.parse(
+    readFileSync(resolve(here, `../public/track/${trackName}.json`), 'utf8'),
+  ) as TrackData;
+
+  const server = new GameServer(track, { port: PORT, laps: 999, staticDirs: [] });
+  server.start();
+
+  const q = new TrackQuery(track);
+  const profile = buildSpeedProfile(q);
+
+  console.log(`load test: ${clientCount} clients, ${seconds} s, track ${track.name}`);
+  console.log(`collision geometry: ${server.room.world.triangles} triangles\n`);
+
+  const clients: HeadlessClient[] = [];
+  for (let i = 0; i < clientCount; i++) {
+    clients.push(new HeadlessClient(i, q, profile));
+    await sleep(60); // stagger, so the joins look like real players arriving
+  }
+
+  const rssSamples: { t: number; rss: number }[] = [];
+  const started = Date.now();
+  const startTick = server.room.tick;
+
+  const sampler = setInterval(() => {
+    const t = (Date.now() - started) / 1000;
+    rssSamples.push({ t, rss: process.memoryUsage().rss });
+    const ticks = server.room.tickMs;
+    const hz = (server.room.tick - startTick) / t;
+    console.log(
+      `  t=${t.toFixed(0).padStart(4)}s  ` +
+        `tick ${hz.toFixed(1).padStart(5)} Hz  ` +
+        `step p50 ${f2(pct(ticks, 50))} p99 ${f2(pct(ticks, 99))} ms  ` +
+        `rss ${mb(process.memoryUsage().rss)} MB  ` +
+        `state ${server.room.state}  cars ${server.room.entrants.size}`,
+    );
+  }, 10_000);
+
+  await sleep(seconds * 1000);
+  clearInterval(sampler);
+
+  // --- report -------------------------------------------------------------
+  const elapsed = (Date.now() - started) / 1000;
+  const ticks = server.room.tickMs;
+  const achievedHz = (server.room.tick - startTick) / elapsed;
+  const budgetMs = 1000 / TICK_HZ;
+
+  const p50 = pct(ticks, 50);
+  const p99 = pct(ticks, 99);
+  const headroom = (1 - p99 / budgetMs) * 100;
+
+  const totalBytes = clients.reduce((s, c) => s + c.bytes, 0);
+  const allRtt = clients.flatMap((c) => c.rtts);
+  const connected = clients.filter((c) => c.ws.readyState === 1).length;
+
+  const firstRss = rssSamples[0]?.rss ?? 0;
+  const lastRss = rssSamples[rssSamples.length - 1]?.rss ?? 0;
+  const rssGrowth = firstRss > 0 ? ((lastRss - firstRss) / firstRss) * 100 : 0;
+
+  console.log('\n--- results -------------------------------------------------');
+  console.log(`clients connected     ${connected}/${clientCount}`);
+  console.log(`cars in room          ${server.room.entrants.size}`);
+  console.log(`room state            ${server.room.state}`);
+  console.log(`\ntick rate             ${achievedHz.toFixed(2)} Hz  (target ${TICK_HZ})`);
+  console.log(`step time p50         ${f2(p50)} ms   of ${f2(budgetMs)} ms budget`);
+  console.log(`step time p99         ${f2(p99)} ms`);
+  console.log(`step time max         ${f2(Math.max(...ticks))} ms`);
+  console.log(`CPU headroom at p99   ${headroom.toFixed(1)}%`);
+  console.log(
+    `\nbandwidth down        ${((totalBytes / elapsed / clientCount) / 1024).toFixed(1)} KB/s per client`,
+  );
+  console.log(`snapshots received    ${clients.reduce((s, c) => s + c.snaps, 0)}`);
+  console.log(
+    `round trip            p50 ${f2(pct(allRtt, 50))} ms  p99 ${f2(pct(allRtt, 99))} ms  (loopback)`,
+  );
+  console.log(`\nRSS start             ${mb(firstRss)} MB`);
+  console.log(`RSS end               ${mb(lastRss)} MB`);
+  console.log(`RSS growth            ${rssGrowth.toFixed(1)}%`);
+
+  console.log('\n--- gate checks ---------------------------------------------');
+  const check1 = achievedHz > TICK_HZ * 0.98 && headroom >= 40;
+  const check5 = Math.abs(rssGrowth) < 15;
+  console.log(`1. server stability   ${check1 ? 'PASS' : 'FAIL'}  ` +
+    `(${achievedHz.toFixed(1)} Hz, ${headroom.toFixed(0)}% headroom at p99; needs >=40%)`);
+  console.log(`5. memory flat        ${check5 ? 'PASS' : 'FAIL'}  ` +
+    `(RSS ${rssGrowth >= 0 ? '+' : ''}${rssGrowth.toFixed(1)}% over ${elapsed.toFixed(0)} s; needs <15%)`);
+  if (elapsed < 300) console.log('   note: check 1 wants 5 minutes, check 5 wants 10. This run was shorter.');
+
+  for (const c of clients) c.close();
+  await server.stop();
+  process.exit(check1 && check5 ? 0 : 1);
+}
+
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+main().catch((e) => {
+  console.error(e);
+  process.exit(1);
+});

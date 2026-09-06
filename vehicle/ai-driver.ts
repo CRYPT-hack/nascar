@@ -15,10 +15,29 @@
  */
 
 import { CAR } from '../shared/constants';
-import type { CarInput } from '../shared/protocol';
-import type { Car } from './car';
-import { angleDelta, clamp, dot, sub, yawOf, type V3 } from './math3';
+import type { CarInput, SurfaceKind } from '../shared/protocol';
+import { angleDelta, clamp, dot, sub, yawOf, type Q4, type V3 } from './math3';
 import type { TrackPoint, TrackQuery } from './track-query';
+
+/**
+ * What the driver needs to see. `Car` satisfies this structurally, and so does
+ * a view reconstructed from a snapshot - which is how tools/loadtest.ts drives
+ * ten headless clients without giving each of them a physics world of its own.
+ */
+export interface DrivableView {
+  position(): V3;
+  rotation(): Q4;
+  linvel(): V3;
+  angvel(): V3;
+  forward(): V3;
+  right(): V3;
+  up(): V3;
+  readonly speed: number;
+  readonly forwardSpeed: number;
+  readonly surface: SurfaceKind;
+  isInverted(): boolean;
+  maxSteerAngle(speed: number): number;
+}
 
 export interface AiSkill {
   /** 0..1. Scales cornering speed, so a slower AI is slower everywhere. */
@@ -168,7 +187,7 @@ export class AiDriver {
     return this.hint;
   }
 
-  update(car: Car, dt: number, others: V3[] = []): CarInput {
+  update(car: DrivableView, dt: number, others: V3[] = []): CarInput {
     // Reaction lag: hold the previous decision for a few ticks. Without it the
     // AI is inhumanly precise and no player will ever pass one.
     if (this.holdTicks > 0) {
@@ -177,7 +196,7 @@ export class AiDriver {
     }
     this.holdTicks = Math.max(0, Math.round(this.skill.reaction / dt) - 1);
 
-    const p = car.body.translation();
+    const p = car.position();
     const loc = this.q.locate(p.x, p.y, p.z, this.hint);
     this.hint = loc.index;
     const speed = Math.max(0, car.forwardSpeed);
@@ -209,17 +228,17 @@ export class AiDriver {
    * acceleration the corner demands, plus cross-track feedback so a small error
    * is corrected rather than accumulated.
    */
-  private steerFor(car: Car, loc: TrackPoint, speed: number): number {
+  private steerFor(car: DrivableView, loc: TrackPoint, speed: number): number {
     // Look further ahead the faster you are going. A short lookahead oscillates
     // on a straight; a long one cuts the apex and understeers on entry.
     const lookahead = clamp(7 + speed * 0.5, 9, 42);
     const steps = Math.max(2, Math.round(lookahead / 3));
     const target = this.pointOnLine((this.hint + steps) % this.q.count);
 
-    const p = car.body.translation();
+    const p = car.position();
     const toTarget = sub(target, { x: p.x, y: p.y, z: p.z });
     const ld = Math.max(3, Math.hypot(toTarget.x, toTarget.z));
-    const alpha = angleDelta(Math.atan2(toTarget.x, -toTarget.z), yawOf(car.body.rotation()));
+    const alpha = angleDelta(Math.atan2(toTarget.x, -toTarget.z), yawOf(car.rotation()));
 
     // Do not ask for more curvature than the tyres can deliver at this speed.
     const kappaMax = speed > 4 ? (STEER_LAT_G * 9.81) / (speed * speed) : 1;
@@ -236,7 +255,7 @@ export class AiDriver {
     // A little yaw damping. Positive angvel.y rotates -Z toward -X, which is a
     // LEFT turn and so decreases the yaw measured by yawOf(); countering it
     // means steering right, which is a positive input. Hence +=, not -=.
-    steer += clamp(car.body.angvel().y * 0.05, -0.15, 0.15);
+    steer += clamp(car.angvel().y * 0.05, -0.15, 0.15);
 
     // Catch a slide. Body slip is the angle between where the car is pointing
     // and where it is actually going; positive means the velocity is to the
@@ -261,19 +280,19 @@ export class AiDriver {
    * Angle between the car's heading and its actual direction of travel.
    * Zero when tracking straight, large when sliding.
    */
-  private bodySlip(car: Car, speed: number): number {
+  private bodySlip(car: DrivableView, speed: number): number {
     if (speed < 6) return 0;
-    const v = car.body.linvel();
-    return angleDelta(Math.atan2(v.x, -v.z), yawOf(car.body.rotation()));
+    const v = car.linvel();
+    return angleDelta(Math.atan2(v.x, -v.z), yawOf(car.rotation()));
   }
 
   /**
    * Distance to the nearest car directly ahead, or Infinity. Only counts cars
    * roughly in this one's path - a car alongside is not something to lift for.
    */
-  private gapAhead(car: Car, others: V3[]): number {
+  private gapAhead(car: DrivableView, others: V3[]): number {
     if (others.length === 0) return Infinity;
-    const p = car.body.translation();
+    const p = car.position();
     const fwd = car.forward();
     const right = car.right();
     let best = Infinity;
@@ -287,7 +306,7 @@ export class AiDriver {
     return best;
   }
 
-  private pedalsFor(car: Car, speed: number, gapAhead = Infinity): { throttle: number; brake: number } {
+  private pedalsFor(car: DrivableView, speed: number, gapAhead = Infinity): { throttle: number; brake: number } {
     const spacing = 3;
     const brakeDist = (speed * speed) / (2 * BRAKE_G * 9.81);
     const window = Math.max(4, Math.round(brakeDist / spacing) + 6);
@@ -333,7 +352,7 @@ export class AiDriver {
   }
 
   /** Reverse out of a barrier rather than grinding along it. */
-  private unstick(car: Car, loc: TrackPoint): CarInput | null {
+  private unstick(car: DrivableView, loc: TrackPoint): CarInput | null {
     if (this.reverseTicks > 0) {
       this.reverseTicks--;
       // Steer back toward the centreline while reversing.
@@ -384,9 +403,9 @@ export class AiDriver {
    * weak: the AI is scenery, and one that defends its line aggressively will
    * spoil more races than it improves.
    */
-  private avoid(car: Car, others: V3[], speed: number): number {
+  private avoid(car: DrivableView, others: V3[], speed: number): number {
     if (others.length === 0) return 0;
-    const p = car.body.translation();
+    const p = car.position();
     const fwd = car.forward();
     const right = car.right();
     let nudge = 0;

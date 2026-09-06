@@ -318,6 +318,27 @@ export class Car {
     return t.maxSteerAngle + (t.minSteerAngle - t.maxSteerAngle) * f;
   }
 
+  /** DrivableView: the AI driver reads a car through these. */
+  position(): V3 {
+    const p = this.body.translation();
+    return { x: p.x, y: p.y, z: p.z };
+  }
+
+  rotation(): Q4 {
+    const q = this.body.rotation();
+    return { x: q.x, y: q.y, z: q.z, w: q.w };
+  }
+
+  linvel(): V3 {
+    const v = this.body.linvel();
+    return { x: v.x, y: v.y, z: v.z };
+  }
+
+  angvel(): V3 {
+    const a = this.body.angvel();
+    return { x: a.x, y: a.y, z: a.z };
+  }
+
   forward(): V3 {
     return rotate(this.body.rotation(), { x: 0, y: 0, z: -1 });
   }
