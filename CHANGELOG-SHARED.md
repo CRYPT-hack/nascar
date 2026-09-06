@@ -25,3 +25,11 @@ Contract established from HANDOFF.md §5. Contents:
 Additions beyond the letter of §5.4 (`hello`, `ready`, `roster`, `lap`, `pong`,
 `error`) are new message types, not modifications to `input`/`snap`/`state`/
 `result`. The wire shapes given in §5.4 are byte-for-byte as specified.
+
+## 2026-09-07T01:10Z — shared/track-schema.ts — no change; semantic note on mesh fields
+
+`collisionMesh` and `visualMesh` now carry `"procedural:collision"` and
+`"procedural:visual"` rather than `.glb` filenames. The field types and the
+schema are untouched — this is a change in what the strings mean, not in the
+contract's shape. Both sides build meshes from the waypoints via
+`buildTrackMeshes()`. Rationale in DECISION-LOG.md.
