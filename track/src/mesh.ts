@@ -43,7 +43,7 @@ export interface TrackMeshes {
   collision: CollisionData;
   /** Barrier walls. Separate so they can take GROUP.BARRIER. */
   barrierCollision: CollisionData;
-  visual: Record<'asphalt' | 'kerb' | 'grass' | 'gravel' | 'barrier', MeshData>;
+  visual: Record<'asphalt' | 'kerb' | 'grass' | 'gravel' | 'barrier' | 'startLine', MeshData>;
   /** Cross-section plan, reused by the sampler so it is computed once. */
   section: SectionPlan;
 }
@@ -326,22 +326,57 @@ export function buildTrackMeshes(track: TrackData, opts: MeshOptions = {}): Trac
     const st = stations(f.width, f.runoffL, f.runoffR);
     const sg = stations(g.width, g.runoffL, g.runoffR);
 
-    /** Emit one lateral band between station columns j and j+1 into `target`. */
-    const band = (target: Group, j: number): void => {
-      const a = target.vertex(sectionPoint(f, st[j]!), st[j]!, f.s);
-      const b = target.vertex(sectionPoint(f, st[j + 1]!), st[j + 1]!, f.s);
-      const c = target.vertex(sectionPoint(g, sg[j]!), sg[j]!, sNext);
-      const d = target.vertex(sectionPoint(g, sg[j + 1]!), sg[j + 1]!, sNext);
+    /**
+     * Emit one lateral band between station columns j and j+1 into `target`.
+     *
+     * `uOf` maps a lateral offset to a texture coordinate. It differs per
+     * material because track width varies from 12.5 m to 16 m around the lap:
+     * asphalt and kerb normalise across their own width so painted lines and
+     * kerb stripes stay put, while grass and gravel use raw metres so their
+     * texture tiles at a constant real-world scale instead of stretching.
+     */
+    const band = (target: Group, j: number, uOf: (d: number, width: number) => number): void => {
+      const a = target.vertex(sectionPoint(f, st[j]!), uOf(st[j]!, f.width), f.s);
+      const b = target.vertex(sectionPoint(f, st[j + 1]!), uOf(st[j + 1]!, f.width), f.s);
+      const c = target.vertex(sectionPoint(g, sg[j]!), uOf(sg[j]!, g.width), sNext);
+      const d = target.vertex(sectionPoint(g, sg[j + 1]!), uOf(sg[j + 1]!, g.width), sNext);
       target.quad(a, b, c, d);
     };
 
+    const uAcrossRoad = (d: number, width: number): number => 0.5 + d / width;
+    const uAcrossKerb = (d: number, width: number): number => (Math.abs(d) - width / 2) / KERB_WIDTH;
+    const uMetres = (d: number): number => d;
+
     // Columns: 0=-r2 1=-r1 2=-hw 3=0 4=+hw 5=+r1 6=+r2
-    band(section.leftKind[i] === 'gravel' ? gravel : grass, 0);
-    band(kerb, 1);
-    band(asphalt, 2);
-    band(asphalt, 3);
-    band(kerb, 4);
-    band(section.rightKind[i] === 'gravel' ? gravel : grass, 5);
+    band(section.leftKind[i] === 'gravel' ? gravel : grass, 0, uMetres);
+    band(kerb, 1, uAcrossKerb);
+    band(asphalt, 2, uAcrossRoad);
+    band(asphalt, 3, uAcrossRoad);
+    band(kerb, 4, uAcrossKerb);
+    band(section.rightKind[i] === 'gravel' ? gravel : grass, 5, uMetres);
+  }
+
+  // --- Start/finish line ---------------------------------------------------
+  // Sits just above the road rather than being cut into it: a 15 mm lift is
+  // invisible at any camera angle the game uses and avoids z-fighting without
+  // needing a depth-offset material.
+  const startLine = new Group();
+  {
+    const f = frames[0]!;
+    const g = frames[1 % n]!;
+    const lift = 0.015;
+    const hwA = f.width / 2;
+    const hwB = g.width / 2;
+    const raise = (p: V3, fr: Frame): V3 => [
+      p[0] + fr.up[0] * lift,
+      p[1] + fr.up[1] * lift,
+      p[2] + fr.up[2] * lift,
+    ];
+    const a = startLine.vertex(raise(sectionPoint(f, -hwA), f), 0, 0);
+    const b = startLine.vertex(raise(sectionPoint(f, hwA), f), 1, 0);
+    const c = startLine.vertex(raise(sectionPoint(g, -hwB), g), 0, 1);
+    const d = startLine.vertex(raise(sectionPoint(g, hwB), g), 1, 1);
+    startLine.quad(a, b, c, d);
   }
 
   return {
@@ -353,6 +388,7 @@ export function buildTrackMeshes(track: TrackData, opts: MeshOptions = {}): Trac
       grass: grass.finish(),
       gravel: gravel.finish(),
       barrier: barrierVis.finish(),
+      startLine: startLine.finish(),
     },
     section,
   };

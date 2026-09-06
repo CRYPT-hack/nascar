@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Track preview — Interlagos Racer</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        background: #bcd4ea;
+      }
+      canvas {
+        display: block;
+      }
+      #info {
+        position: fixed;
+        left: 12px;
+        top: 12px;
+        z-index: 10;
+        padding: 10px 14px;
+        border-radius: 8px;
+        background: rgba(12, 16, 22, 0.72);
+        color: #e8eef5;
+        font:
+          13px/1.55 ui-monospace,
+          SFMono-Regular,
+          Menlo,
+          monospace;
+        pointer-events: none;
+        backdrop-filter: blur(6px);
+      }
+      #info b {
+        color: #ffd60a;
+      }
+      #info .k {
+        display: inline-block;
+        padding: 0 5px;
+        border-radius: 4px;
+        background: #2b3440;
+        color: #9fd0ff;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="info">loading…</div>
+    <script type="module" src="/client/src/preview.ts"></script>
+  </body>
+</html>
