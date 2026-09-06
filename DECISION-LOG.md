@@ -7,7 +7,30 @@ Newest blockers go at the very top so they are seen first.
 
 ## BLOCKERS
 
-_None._
+### 2026-09-07 — Cannot push to CRYPT-hack/nascar (needs the human)
+
+Commits are landing locally but **nothing is reaching GitHub.** The `gh` CLI on
+this machine is authenticated as `kartikeyBishnoi`, which has read-only access:
+
+```
+gh api repos/CRYPT-hack/nascar --jq .permissions
+{"admin":false,"maintain":false,"pull":true,"triage":false,"push":false}
+```
+
+`git push` returns 403. This needs one of:
+
+1. add `kartikeyBishnoi` as a collaborator with write access on the repo, or
+2. re-authenticate `gh` as the `CRYPT-hack` account (`gh auth login`), or
+3. say the word and I will push to a fork under `kartikeyBishnoi` and open a PR.
+
+Nothing is lost — every step is committed locally on `main` and will push as
+soon as access exists. Instance B is continuing to build against local commits
+rather than idling. Instance A cannot see any of the track work until this is
+resolved.
+
+A repo-local credential helper (`credential.helper = !gh auth git-credential`)
+is already configured, so a push will work the moment permissions change. Global
+git config was not touched.
 
 ---
 
