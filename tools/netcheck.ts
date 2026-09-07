@@ -451,6 +451,7 @@ async function main(): Promise<void> {
   console.log(`  corrections          ${client.prediction.stats.corrections}`);
   console.log(`  server holds seen    ${client.prediction.serverHolds}`);
   console.log(`  replay inputs dropped ${client.prediction.stats.replayDropped}`);
+  console.log(`  replays skipped      ${client.prediction.stats.replaySkipped}`);
   console.log(`  final pace scale     ${client.prediction.paceScale.toFixed(4)}x`);
   console.log(`  est. queue depth     ${client.prediction.queueDepth.toFixed(2)} inputs`);
   if (client.spikes.length) {

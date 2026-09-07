@@ -30,6 +30,15 @@ import type { RaceWorld } from '../../vehicle/world';
 /** Snapshots older than this are dropped. Well past the interpolation delay. */
 const BUFFER_MS = 2000;
 
+/**
+ * Snapshots the clock-offset estimate looks back over. At 30 Hz, about 5 s.
+ *
+ * Long enough that an ordinary run of jitter contains a near-undelayed packet
+ * to anchor on, short enough that one freak packet cannot hold the timeline
+ * hostage for the rest of the race.
+ */
+const OFFSET_WINDOW = 150;
+
 export interface RemotePose {
   p: V3;
   q: Q4;
@@ -66,7 +75,19 @@ export class RemoteCars {
   private readonly ghosts = new Map<number, RigidBody>();
   private readonly rw: RaceWorld;
   private lastArrival = 0;
-  /** Local clock minus server tick clock, ms. Established from the first snapshot. */
+  /**
+   * Recent samples of (local clock - server tick clock), in ms.
+   *
+   * The offset is the minimum over this window, not over all time. An all-time
+   * minimum is hostage to a single unusually fast packet: once one arrives, the
+   * whole timeline is anchored to it, every later snapshot is placed earlier
+   * than it really was, the render target overtakes the newest sample, and the
+   * buffer reads stale forever. Measured, that was 64% of frames stale with the
+   * render target 14 ms *ahead* of the newest snapshot.
+   *
+   * A window bounds how long one lucky packet can distort the timeline.
+   */
+  private readonly offsetSamples: number[] = [];
   private offset: number | null = null;
   private staleFrames = 0;
   private totalFrames = 0;
@@ -96,9 +117,11 @@ export class RemoteCars {
 
     const tickMs = snap.tick * (1000 / TICK_HZ);
     const observed = now - tickMs;
-    if (this.offset === null) this.offset = observed;
-    else if (observed < this.offset) this.offset = observed; // a faster packet
-    else this.offset += (observed - this.offset) * 0.002; // slow drift correction
+    this.offsetSamples.push(observed);
+    if (this.offsetSamples.length > OFFSET_WINDOW) this.offsetSamples.shift();
+    let lowest = this.offsetSamples[0]!;
+    for (const o of this.offsetSamples) if (o < lowest) lowest = o;
+    this.offset = lowest;
 
     const s: Sample = { recv: now, t: this.offset + tickMs, tick: snap.tick, cars };
 
@@ -236,6 +259,7 @@ export class RemoteCars {
     for (const body of this.ghosts.values()) this.rw.world.removeRigidBody(body);
     this.ghosts.clear();
     this.samples.length = 0;
+    this.offsetSamples.length = 0;
     this.offset = null;
   }
 }

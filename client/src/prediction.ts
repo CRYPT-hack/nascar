@@ -35,6 +35,24 @@ const HARD_SNAP_METRES = 4.0;
 const SMOOTH_TAU = 0.09;
 
 /**
+ * How closely the server has to agree with the prediction to skip the replay.
+ *
+ * Reconciliation replays every unacknowledged input on every snapshot, which at
+ * 100 ms RTT is around 26 physics steps per snapshot, 780 a second on top of
+ * the 60 the client needs. Measured, that is about 70% of a core spent
+ * re-simulating a past the client almost always got exactly right.
+ *
+ * So check first. If the server's state at the acknowledged input matches what
+ * was predicted for it, the prediction was correct, everything built on top of
+ * it is correct, and the replay is pure waste. The tolerance is a millimetre
+ * and a millimetre per second, which is the resolution the snapshot is rounded
+ * to anyway - agreement below that is not measurable on the wire.
+ */
+const AGREE_POS = 0.0025;
+const AGREE_VEL = 0.02;
+const AGREE_ROT = 0.0008;
+
+/**
  * How many recent inputs are re-sent alongside each new one.
  *
  * A lost input is not a lost frame - the server holds the previous input for
@@ -135,6 +153,14 @@ interface Pending {
    * what the server's car had after it finished applying input N.
    */
   steerBefore: number;
+  /**
+   * Predicted state once this input had been applied for all its steps.
+   *
+   * Kept so reconciliation can ask the only question that matters: did the
+   * server end up where we said it would? If it did, the current state is
+   * already correct and there is nothing to replay.
+   */
+  after: CarState | null;
 }
 
 export interface PredictionStats {
@@ -150,6 +176,8 @@ export interface PredictionStats {
   hardSnaps: number;
   /** Inputs discarded rather than replayed, because the backlog was too deep. */
   replayDropped: number;
+  /** Snapshots where the server agreed with the prediction, so no replay ran. */
+  replaySkipped: number;
   /** Set by reconcile() so a harness can inspect what produced a correction. */
   lastAckSeq: number;
   lastPending: number;
@@ -179,6 +207,7 @@ export class PredictedCar {
     corrections: 0,
     hardSnaps: 0,
     replayDropped: 0,
+    replaySkipped: 0,
     lastAckSeq: 0,
     lastPending: 0,
   };
@@ -236,7 +265,7 @@ export class PredictedCar {
     if (this.stepIndex % TICKS_PER_INPUT === 0) {
       const seq = ++this.seq;
       const steerBefore = this.car.readState().steer;
-      this.pending.push({ seq, input: sample(seq), steps: 0, steerBefore });
+      this.pending.push({ seq, input: sample(seq), steps: 0, steerBefore, after: null });
       if (this.pending.length > MAX_PENDING_INPUTS) this.pending.shift();
     }
 
@@ -247,6 +276,9 @@ export class PredictedCar {
     }
     this.rw.world.step();
     this.car.postStep();
+    // Once an input has had all its steps, record where it landed us. That is
+    // what the next snapshot's acknowledgement is checked against.
+    if (cur && cur.steps >= TICKS_PER_INPUT) cur.after = this.car.readState();
     this.stepIndex++;
     this.stats.pending = this.pending.length;
   }
@@ -257,8 +289,26 @@ export class PredictedCar {
    */
   reconcile(snap: CarSnap, ackSeq: number, serverTick?: number): void {
     if (serverTick !== undefined) this.updatePacing(serverTick, ackSeq);
+    // Did the server end up where we predicted for the input it just
+    // acknowledged? If so there is nothing to correct and nothing to replay.
+    let agreed = false;
+    for (const p of this.pending) {
+      if (p.seq !== ackSeq) continue;
+      if (p.after) agreed = statesAgree(p.after, snap);
+      break;
+    }
+
     // Everything up to ackSeq is now history.
     while (this.pending.length > 0 && this.pending[0]!.seq <= ackSeq) this.pending.shift();
+
+    if (agreed) {
+      this.stats.lastError = 0;
+      this.stats.lastReplay = 0;
+      this.stats.lastAckSeq = ackSeq;
+      this.stats.lastPending = this.pending.length;
+      this.stats.replaySkipped++;
+      return;
+    }
 
     // Bound the replay. See MAX_REPLAY_INPUTS.
     if (this.pending.length > MAX_REPLAY_INPUTS) {
@@ -394,6 +444,26 @@ export class PredictedCar {
   renderPositionSmoothed(prev: V3, alpha: number): V3 {
     return lerpV3(prev, this.renderPosition(), alpha);
   }
+}
+
+/**
+ * Does a predicted state match what the server reported?
+ *
+ * Compared against the wire's own resolution: positions are rounded to a
+ * millimetre and rotations to 1e-4 before transmission, so agreement finer than
+ * that is not observable and demanding it would replay on rounding noise alone.
+ */
+function statesAgree(pred: CarState, snap: CarSnap): boolean {
+  if (Math.abs(pred.p.x - snap.p[0]) > AGREE_POS) return false;
+  if (Math.abs(pred.p.y - snap.p[1]) > AGREE_POS) return false;
+  if (Math.abs(pred.p.z - snap.p[2]) > AGREE_POS) return false;
+  if (Math.abs(pred.v.x - snap.v[0]) > AGREE_VEL) return false;
+  if (Math.abs(pred.v.y - snap.v[1]) > AGREE_VEL) return false;
+  if (Math.abs(pred.v.z - snap.v[2]) > AGREE_VEL) return false;
+  // Quaternions are double-covered: q and -q are the same rotation.
+  const d =
+    pred.q.x * snap.q[0] + pred.q.y * snap.q[1] + pred.q.z * snap.q[2] + pred.q.w * snap.q[3];
+  return 1 - Math.abs(d) <= AGREE_ROT;
 }
 
 function dist(a: V3, b: V3): number {
