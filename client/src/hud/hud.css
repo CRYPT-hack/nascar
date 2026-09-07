@@ -285,6 +285,9 @@
   display: flex;
   gap: 12px;
   align-items: center;
+  /* Ten colour swatches do not fit one row on a phone, and an overflowing
+     flex row gives the whole page a horizontal scrollbar. */
+  flex-wrap: wrap;
 }
 
 .screen button {
@@ -312,4 +315,78 @@
 .screen .hint {
   color: var(--dim);
   font-size: 13px;
+}
+
+/* Lobby and spectating: keep the centre banner, drop the racing readouts. */
+.hud.panels-hidden .hud-panel,
+.hud.panels-hidden .hud-draft {
+  display: none;
+}
+
+.screen .field {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin: 20px 0 4px;
+}
+
+.screen .field label {
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--dim);
+  font-weight: 600;
+}
+
+.screen input[type='text'] {
+  font: inherit;
+  font-size: 17px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--edge);
+  background: #0c1016;
+  color: var(--ink);
+}
+
+.screen input[type='text']:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* A ready press that the server has not yet acknowledged. */
+.screen button.pending {
+  opacity: 0.7;
+  cursor: progress;
+}
+
+/*
+ * Narrow screens. Players join from their own machines (HANDOFF.md §9), and at
+ * phone widths the position, lap and time panels overlap at full size.
+ */
+@media (max-width: 720px) {
+  .hud-panel {
+    padding: 7px 11px;
+  }
+  .hud-position .value {
+    font-size: 30px;
+  }
+  .hud-lap .value {
+    font-size: 26px;
+  }
+  .hud-times {
+    min-width: 0;
+  }
+  .hud-times .current {
+    font-size: 21px;
+  }
+  .hud-times .rows {
+    gap: 10px;
+    font-size: 11px;
+  }
+  .hud-speed .value {
+    font-size: 40px;
+  }
+  .hud-banner {
+    font-size: 58px;
+  }
 }

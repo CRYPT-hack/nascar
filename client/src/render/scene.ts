@@ -71,6 +71,69 @@ function createSky(radius: number): THREE.Mesh {
   return sky;
 }
 
+/** Colour management, tone mapping and shadows. Shared by both entry points. */
+export function configureRenderer(renderer: THREE.WebGLRenderer): void {
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  // ACES pulls midtones down hard, and a projector pulls them down again.
+  renderer.toneMappingExposure = 1.2;
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+}
+
+/**
+ * Sky, fog and lights, added to an existing scene.
+ *
+ * Split out from `createSceneRig` so the game and the preview harness light the
+ * world identically. The game owns its own camera and drives its own resize, so
+ * it cannot use the whole rig — but it must not grow a second, drifting copy of
+ * the lighting either.
+ */
+export function createEnvironment(
+  scene: THREE.Scene,
+  extent: number,
+): { sun: THREE.DirectionalLight; followShadow(target: THREE.Vector3): void; skyRadius: number } {
+  const skyRadius = Math.max(2000, extent * 3);
+  scene.fog = new THREE.Fog(SKY_HORIZON.getHex(), FOG_NEAR, FOG_FAR);
+  scene.add(createSky(skyRadius));
+
+  // Hemisphere fills the shadowed side. Without it the underside of a car and
+  // the inside of a barrier go to black, which a projector renders as a hole.
+  scene.add(new THREE.HemisphereLight(SKY_HORIZON.getHex(), GROUND_BOUNCE.getHex(), 1.15));
+
+  const sun = new THREE.DirectionalLight(0xfff2dd, 2.1);
+  sun.position.set(-0.45, 1, 0.35).normalize().multiplyScalar(400);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(2048, 2048);
+  // A tight frustum that follows the car: covering the whole circuit at this
+  // map size would put one shadow texel every 40 cm and the cars would have no
+  // recognisable shadow at all.
+  const span = 90;
+  sun.shadow.camera.left = -span;
+  sun.shadow.camera.right = span;
+  sun.shadow.camera.top = span;
+  sun.shadow.camera.bottom = -span;
+  sun.shadow.camera.near = 1;
+  sun.shadow.camera.far = 1200;
+  sun.shadow.bias = -0.0006;
+  sun.shadow.normalBias = 0.03;
+  scene.add(sun);
+  scene.add(sun.target);
+
+  const sunOffset = sun.position.clone();
+
+  return {
+    sun,
+    skyRadius,
+    followShadow(target: THREE.Vector3): void {
+      sun.target.position.copy(target);
+      sun.position.copy(target).add(sunOffset);
+      sun.target.updateMatrixWorld();
+    },
+  };
+}
+
 export interface SceneRig {
   scene: THREE.Scene;
   camera: THREE.PerspectiveCamera;
@@ -105,48 +168,13 @@ export function createSceneRig({ extent, canvas, capturable = false }: SceneOpti
     powerPreference: 'high-performance',
     preserveDrawingBuffer: capturable,
   });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  configureRenderer(renderer);
   renderer.setSize(window.innerWidth, window.innerHeight);
-  renderer.outputColorSpace = THREE.SRGBColorSpace;
-  renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  // ACES pulls midtones down hard, and a projector pulls them down again.
-  renderer.toneMappingExposure = 1.2;
-  renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
   const scene = new THREE.Scene();
-  scene.fog = new THREE.Fog(SKY_HORIZON.getHex(), FOG_NEAR, FOG_FAR);
-
-  const skyRadius = Math.max(2000, extent * 3);
-  scene.add(createSky(skyRadius));
+  const { sun, followShadow, skyRadius } = createEnvironment(scene, extent);
 
   const camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.3, skyRadius * 1.5);
-
-  // Hemisphere fills the shadowed side. Without it the underside of a car and
-  // the inside of a barrier go to black, which a projector renders as a hole.
-  const hemi = new THREE.HemisphereLight(SKY_HORIZON.getHex(), GROUND_BOUNCE.getHex(), 1.15);
-  scene.add(hemi);
-
-  const sun = new THREE.DirectionalLight(0xfff2dd, 2.1);
-  sun.position.set(-0.45, 1, 0.35).normalize().multiplyScalar(400);
-  sun.castShadow = true;
-  sun.shadow.mapSize.set(2048, 2048);
-  // A tight frustum that follows the car: covering the whole circuit at this
-  // map size would put one shadow texel every 40 cm and the cars would have no
-  // recognisable shadow at all.
-  const span = 90;
-  sun.shadow.camera.left = -span;
-  sun.shadow.camera.right = span;
-  sun.shadow.camera.top = span;
-  sun.shadow.camera.bottom = -span;
-  sun.shadow.camera.near = 1;
-  sun.shadow.camera.far = 1200;
-  sun.shadow.bias = -0.0006;
-  sun.shadow.normalBias = 0.03;
-  scene.add(sun);
-  scene.add(sun.target);
-
-  const sunOffset = sun.position.clone();
 
   const resize = (): void => {
     camera.aspect = window.innerWidth / window.innerHeight;
@@ -162,11 +190,7 @@ export function createSceneRig({ extent, canvas, capturable = false }: SceneOpti
     camera,
     renderer,
     sun,
-    followShadow(target: THREE.Vector3): void {
-      sun.target.position.copy(target);
-      sun.position.copy(target).add(sunOffset);
-      sun.target.updateMatrixWorld();
-    },
+    followShadow,
     resize,
     dispose(): void {
       window.removeEventListener('resize', resize);

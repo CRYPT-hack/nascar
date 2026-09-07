@@ -11,7 +11,6 @@
  * 60 Hz update loop does not thrash layout.
  */
 
-import type { RaceState } from '../../../shared/protocol';
 import './hud.css';
 
 export interface HudState {
@@ -29,9 +28,6 @@ export interface HudState {
   lastWasBest: boolean;
   speedKph: number;
   drafting: boolean;
-  raceState: RaceState;
-  /** Seconds remaining in the countdown, or null. */
-  countdown: number | null;
 }
 
 export function initialHudState(totalLaps: number, fieldSize: number): HudState {
@@ -46,8 +42,6 @@ export function initialHudState(totalLaps: number, fieldSize: number): HudState 
     lastWasBest: false,
     speedKph: 0,
     drafting: false,
-    raceState: 'lobby',
-    countdown: null,
   };
 }
 
@@ -165,26 +159,25 @@ export class Hud {
     this.set('speed', this.speedValue, String(Math.max(0, Math.round(s.speedKph))));
     this.toggle('draft', this.draft, 'on', s.drafting);
 
-    this.updateBanner(s);
   }
 
-  private updateBanner(s: HudState): void {
-    let text = '';
-    let go = false;
-
-    if (s.raceState === 'countdown' && s.countdown !== null) {
-      const n = Math.ceil(s.countdown);
-      text = n <= 0 ? 'GO' : String(n);
-      go = n <= 0;
-    } else if (s.raceState === 'grid') {
-      text = 'GET READY';
-    } else if (s.raceState === 'finished') {
-      text = 'FINISH';
-    }
-
+  /**
+   * Centre banner: countdown digits, "GO", phase messages, spectator notice.
+   *
+   * Set explicitly rather than derived from the race state. The caller already
+   * owns the phase machine and has to run the countdown down against a local
+   * clock — `state` messages only arrive on a transition — so deriving the text
+   * here would mean a second, lagging copy of that logic.
+   */
+  setBanner(text: string, go = false): void {
     this.set('banner', this.banner, text);
     this.toggle('banner', this.banner, 'on', text !== '');
     this.toggle('banner', this.banner, 'go', go);
+  }
+
+  /** Hide the racing readouts but keep the banner, for the lobby and spectating. */
+  setPanelsVisible(visible: boolean): void {
+    this.toggle('panels', this.root, 'panels-hidden', !visible);
   }
 
   setVisible(visible: boolean): void {

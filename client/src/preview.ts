@@ -97,7 +97,6 @@ let trackExtent = 500;
 const hud = new Hud();
 const screens = new Screens();
 const hudState = initialHudState(RACE_LAPS, 10);
-hudState.raceState = 'racing';
 hudState.position = 3;
 
 /** Placeholder drivers for checking the lobby and results layouts. Invented names. */

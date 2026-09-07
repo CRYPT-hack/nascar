@@ -1,30 +1,23 @@
 /**
- * PLACEHOLDER RENDERER — Instance B owns presentation (HANDOFF.md §4).
+ * The game's renderer.
  *
- * This exists so the car is drivable and the netcode is verifiable before the
- * real visuals land. It draws the track straight from the same generator the
- * physics uses, at a finer step, plus box cars. Nothing here is meant to
- * survive; replace it wholesale rather than building on it.
+ * Was a placeholder owned by Instance A ("replace it wholesale rather than
+ * building on it"); this is that replacement. It keeps the exact public API
+ * `main.ts` already calls — constructor(canvas), addTrack, resize, add, remove,
+ * render, and the `scene`/`renderer` fields — so none of the netcode wiring
+ * changes, and swaps the body for the real environment in client/src/render/.
  *
- * The one thing worth keeping is `carColor()` and the wheel placement, which
- * read from the frozen constants and the vehicle module rather than from
- * hard-coded numbers.
+ * `CarView` and `carColor` are Instance A's and are kept as they were: car
+ * meshes are assigned to neither instance (see STATUS-INSTANCE-B.md §3).
  */
 
 import * as THREE from 'three';
 
 import { CAR, CAR_COLORS } from '../../shared/constants';
-import type { SurfaceKind } from '../../shared/protocol';
 import type { TrackData } from '../../shared/track-schema';
-import { buildTrackCollision } from '../../vehicle/track-collision';
+import { configureRenderer, createEnvironment } from './render/scene';
+import { createGroundPlane, createTrackView, type TrackView } from './render/track-view';
 import type { Q4, V3 } from '../../vehicle/math3';
-
-const SURFACE_COLOR: Record<SurfaceKind, number> = {
-  asphalt: 0x35383d,
-  kerb: 0xb5453f,
-  grass: 0x33502f,
-  gravel: 0x8a7a5c,
-};
 
 export function carColor(index: number): number {
   return CAR_COLORS[((index % CAR_COLORS.length) + CAR_COLORS.length) % CAR_COLORS.length]!;
@@ -95,19 +88,13 @@ export class Scene {
   readonly scene = new THREE.Scene();
   readonly renderer: THREE.WebGLRenderer;
 
+  private view: TrackView | null = null;
+  private followShadow: ((t: THREE.Vector3) => void) | null = null;
+  private readonly shadowTarget = new THREE.Vector3();
+
   constructor(canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
-    this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-
-    this.scene.background = new THREE.Color(0x0f1420);
-    this.scene.fog = new THREE.Fog(0x0f1420, 220, 900);
-
-    const hemi = new THREE.HemisphereLight(0xbcd4ff, 0x2a2a20, 1.15);
-    this.scene.add(hemi);
-
-    const sun = new THREE.DirectionalLight(0xfff2dc, 1.5);
-    sun.position.set(180, 320, -140);
-    this.scene.add(sun);
+    configureRenderer(this.renderer);
   }
 
   resize(w: number, h: number): void {
@@ -115,57 +102,20 @@ export class Scene {
   }
 
   /**
-   * Build the track from the same generator the physics uses, at every
-   * waypoint rather than every other one. Same source, so what you drive on is
-   * what you see - a mismatch between the two is the sort of bug that gets
-   * blamed on the netcode for a full day.
+   * Build the world. Geometry comes from track/src/mesh.ts, which is generated
+   * from the same waypoints the physics colliders are built from, so what you
+   * drive on is what you see.
+   *
+   * Lighting and sky are added here rather than in the constructor because the
+   * sky dome and shadow frustum are sized from the circuit, which is not known
+   * until now. `main.ts` calls this immediately after constructing.
    */
   addTrack(track: TrackData): void {
-    const meshes = buildTrackCollision(track, 1);
+    const env = createEnvironment(this.scene, extentOf(track));
+    this.followShadow = env.followShadow;
 
-    for (const s of meshes.surfaces) {
-      const geo = new THREE.BufferGeometry();
-      geo.setAttribute('position', new THREE.BufferAttribute(s.data.positions, 3));
-      geo.setIndex(new THREE.BufferAttribute(s.data.indices, 1));
-      geo.computeVertexNormals();
-      const mat = new THREE.MeshStandardMaterial({
-        color: SURFACE_COLOR[s.kind],
-        roughness: s.kind === 'asphalt' ? 0.95 : 1,
-        side: THREE.DoubleSide,
-      });
-      this.scene.add(new THREE.Mesh(geo, mat));
-    }
-
-    const bg = new THREE.BufferGeometry();
-    bg.setAttribute('position', new THREE.BufferAttribute(meshes.barriers.positions, 3));
-    bg.setIndex(new THREE.BufferAttribute(meshes.barriers.indices, 1));
-    bg.computeVertexNormals();
-    this.scene.add(
-      new THREE.Mesh(
-        bg,
-        new THREE.MeshStandardMaterial({ color: 0xdfe3ea, roughness: 0.8, side: THREE.DoubleSide }),
-      ),
-    );
-
-    this.addStartLine(track);
-  }
-
-  /** A visible start/finish line, so lap timing is legible on camera. */
-  private addStartLine(track: TrackData): void {
-    const w0 = track.waypoints[0]!;
-    const w1 = track.waypoints[1]!;
-    const fx = w1.p[0] - w0.p[0];
-    const fz = w1.p[2] - w0.p[2];
-    const fl = Math.hypot(fx, fz) || 1;
-    const geo = new THREE.PlaneGeometry(w0.width, 1.6);
-    geo.rotateX(-Math.PI / 2);
-    const mesh = new THREE.Mesh(
-      geo,
-      new THREE.MeshStandardMaterial({ color: 0xf2f2f7, roughness: 0.7 }),
-    );
-    mesh.position.set(w0.p[0], w0.p[1] + 0.03, w0.p[2]);
-    mesh.rotation.y = Math.atan2(fx / fl, -(fz / fl));
-    this.scene.add(mesh);
+    this.view = createTrackView(track);
+    this.scene.add(this.view.root, createGroundPlane(track));
   }
 
   add(o: THREE.Object3D): void {
@@ -177,6 +127,33 @@ export class Scene {
   }
 
   render(camera: THREE.Camera): void {
+    // Drag the shadow frustum along with the camera. It is only 180 m across —
+    // tight enough to give a car a real shadow, which means it has to follow
+    // the action. The chase camera sits just behind the local car, so its
+    // position is the right thing to track and needs nothing from main.ts.
+    if (this.followShadow) {
+      camera.getWorldPosition(this.shadowTarget);
+      this.followShadow(this.shadowTarget);
+    }
     this.renderer.render(this.scene, camera);
   }
+
+  dispose(): void {
+    this.view?.dispose();
+  }
+}
+
+/** Half the larger horizontal span of the circuit, metres. */
+function extentOf(track: TrackData): number {
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minZ = Infinity;
+  let maxZ = -Infinity;
+  for (const w of track.waypoints) {
+    minX = Math.min(minX, w.p[0]);
+    maxX = Math.max(maxX, w.p[0]);
+    minZ = Math.min(minZ, w.p[2]);
+    maxZ = Math.max(maxZ, w.p[2]);
+  }
+  return Math.max(maxX - minX, maxZ - minZ) / 2;
 }

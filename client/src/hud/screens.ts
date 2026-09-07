@@ -43,10 +43,18 @@ export interface LobbyOptions {
   /** Currently selected colour index for this client. */
   selfColor: number;
   ready: boolean;
+  /** True while a ready press is waiting on the server to confirm it. */
+  readyPending?: boolean;
   /** How the player joins — shown so the host can read it out at the venue. */
   joinHint?: string;
   onReady(ready: boolean): void;
   onColor(colorIndex: number): void;
+}
+
+export interface JoinOptions {
+  name: string;
+  color: number;
+  onJoin(name: string, color: number): void;
 }
 
 export class Screens {
@@ -131,8 +139,19 @@ export class Screens {
     this.card.append(picker);
 
     const actions = el('div', 'actions');
-    const readyBtn = el('button', undefined, o.ready ? 'Not ready' : "I'm ready");
+    // The middle state matters: a `ready` can be lost and is re-sent until the
+    // roster confirms it. Saying so is the difference between a visible pause
+    // and a player who believes they are in a race the server never heard of.
+    const label = o.readyPending
+      ? o.ready
+        ? 'Cancelling…'
+        : 'Confirming…'
+      : o.ready
+        ? 'Ready — click to cancel'
+        : "I'm ready";
+    const readyBtn = el('button', undefined, label);
     if (o.ready) readyBtn.className = 'ghost';
+    if (o.readyPending) readyBtn.classList.add('pending');
     readyBtn.addEventListener('click', () => o.onReady(!o.ready));
     actions.append(readyBtn, el('span', 'hint', `First to ${RACE_LAPS} laps wins. Race starts when everyone is ready.`));
     this.card.append(actions);
@@ -194,6 +213,84 @@ export class Screens {
       this.card.append(actions);
     }
 
+    this.root.hidden = false;
+  }
+
+  /**
+   * Pre-connect screen: pick a name and a colour, then join.
+   *
+   * Separate from `showLobby` because it runs before there is a connection, so
+   * there is no roster to show and no server to confirm anything against.
+   * HANDOFF.md §11: "a judge opens a link, picks a car colour, and races."
+   */
+  showJoin(o: JoinOptions): void {
+    this.card.replaceChildren();
+    this.card.append(
+      el('h1', undefined, 'Interlagos'),
+      el('p', 'sub', `${RACE_LAPS} laps. Pick a name and a colour.`),
+    );
+
+    const field = el('div', 'field');
+    const label = el('label', undefined, 'Driver name');
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.maxLength = 16;
+    input.placeholder = 'your name';
+    input.value = o.name;
+    field.append(label, input);
+    this.card.append(field);
+
+    let color = o.color;
+    const picker = el('div', 'actions');
+    const paint = (): void => {
+      [...picker.children].forEach((b, i) => {
+        (b as HTMLElement).style.borderColor = i === color ? hex(CAR_COLORS[i]!) : 'var(--edge)';
+      });
+    };
+    for (let i = 0; i < CAR_COLORS.length; i++) {
+      const b = el('button', 'ghost');
+      b.style.padding = '10px';
+      b.title = CAR_COLOR_NAMES[i] ?? '';
+      b.append(swatch(i));
+      b.addEventListener('click', () => {
+        color = i;
+        paint();
+      });
+      picker.append(b);
+    }
+    paint();
+    this.card.append(picker);
+
+    const go = (): void => {
+      const name = input.value.trim() || 'Driver';
+      o.onJoin(name, color);
+    };
+    // Enter submits: at a hackathon nobody wants to find the button.
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') go();
+    });
+
+    const actions = el('div', 'actions');
+    const joinBtn = el('button', undefined, 'Join race');
+    joinBtn.addEventListener('click', go);
+    actions.append(joinBtn);
+    this.card.append(actions);
+
+    this.root.hidden = false;
+    input.focus();
+  }
+
+  /** Full-screen message, for a lost connection or a refused join. */
+  showMessage(title: string, detail: string, onRetry?: () => void): void {
+    this.card.replaceChildren();
+    this.card.append(el('h1', undefined, title), el('p', 'sub', detail));
+    if (onRetry) {
+      const actions = el('div', 'actions');
+      const btn = el('button', undefined, 'Try again');
+      btn.addEventListener('click', onRetry);
+      actions.append(btn);
+      this.card.append(actions);
+    }
     this.root.hidden = false;
   }
 
