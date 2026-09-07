@@ -197,16 +197,21 @@ class Game {
         break;
       }
 
-      case 'state':
+      case 'state': {
+        // The server repeats this once a second so a lost transition heals.
+        // A repeat of the phase we are already in must be a no-op for the UI,
+        // or the "GO" banner flashes every second for the whole race.
+        const changed = msg.state !== this.state;
         this.state = msg.state;
-        this.ui.setState(msg.state, msg.timer);
+        if (changed) this.ui.setState(msg.state, msg.timer);
+        else this.ui.syncTimer(msg.state, msg.timer);
         // A new race: the server clears every ready flag on the way to lobby,
         // and our intent goes with it so we do not re-assert a stale one.
-        if (msg.state === 'lobby') {
+        if (changed && msg.state === 'lobby') {
           this.readyIntent = false;
           this.readyConfirmed = false;
         }
-        if (msg.state === 'grid') {
+        if (changed && msg.state === 'grid') {
           // The server has just reset every car onto the grid. Anything the
           // prediction has queued describes a race that no longer exists.
           this.spawned = false;
@@ -214,6 +219,7 @@ class Game {
           this.camera.reset();
         }
         break;
+      }
 
       case 'snap':
         this.onSnapshot(msg);

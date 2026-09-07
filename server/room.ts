@@ -76,6 +76,21 @@ const INPUT_BUFFER_TARGET = 2;
  */
 const LOBBY_WAIT_SECONDS = 25;
 
+/**
+ * How often the current race phase is re-broadcast, in ticks.
+ *
+ * `state` used to be sent once per transition. Losing that one packet left the
+ * client believing the race had not started - and a client that does not think
+ * it is racing sends neutral input, so the player simply could not drive, with
+ * no way back until the next transition. It cost a whole 120-second gate run
+ * before it was spotted, and it is the same defect as the unacknowledged
+ * `ready`: a once-only message on a lossy link.
+ *
+ * A few bytes a second makes the phase self-healing. Clients treat a repeat of
+ * the phase they are already in as a no-op, so nothing flashes.
+ */
+const STATE_REBROADCAST_TICKS = TICK_HZ;
+
 /** A car is respawned after being stuck or inverted for this long. */
 const RESCUE_SECONDS = 5;
 /** Race is abandoned if nobody finishes within this long after the leader. */
@@ -530,6 +545,14 @@ export class Room {
     this.rescueStuck(frozen);
 
     if (this.tick % TICKS_PER_SNAPSHOT === 0) this.broadcastSnapshots();
+    if (this.tick % STATE_REBROADCAST_TICKS === 0) {
+      this.hooks.broadcast({
+        t: 'state',
+        state: this.state,
+        timer: this.phaseTimer(),
+        tick: this.tick,
+      });
+    }
 
     const dt = performance.now() - t0;
     this.tickMs.push(dt);

@@ -53,10 +53,22 @@ function makeRoom(track: TrackData, opts: RoomOptions = {}): {
   return { room, sent };
 }
 
-/** Advance the room by `seconds` of simulated time. */
+/**
+ * Advance the room by `seconds` of simulated time.
+ *
+ * Entrants are kept alive as we go. The room drops a client that has been
+ * silent for CLIENT_TIMEOUT_MS of *wall* time, and this loop runs simulated
+ * time far faster than real time - two minutes of racing in a few seconds of
+ * wall clock. Without this the human entrant is dropped mid-test, the room
+ * empties, resets to lobby, and the assertions fail for a reason that has
+ * nothing to do with what they are testing.
+ */
 function run(room: Room, seconds: number): void {
   const n = Math.round(seconds * TICK_HZ);
-  for (let i = 0; i < n; i++) room.step();
+  for (let i = 0; i < n; i++) {
+    if (i % TICK_HZ === 0) for (const e of room.entrants.values()) room.touch(e.id);
+    room.step();
+  }
 }
 
 async function main(): Promise<void> {

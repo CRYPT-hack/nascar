@@ -41,7 +41,7 @@ import { INPUT_REDUNDANCY, PredictedCar } from '../client/src/prediction';
 import { RemoteCars } from '../client/src/remote';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const PORT = 8098;
+const PORT = Number(process.env['NETCHECK_PORT'] ?? 8098);
 
 interface Sim {
   lag: number;
@@ -117,6 +117,20 @@ class SimClient {
   private spawned = false;
   dropped = 0;
 
+  /**
+   * Server tick and wall clock at the first and last snapshot seen.
+   *
+   * The server stamps every snapshot with its own tick, so the client can work
+   * out the rate the server actually achieved without any access to it. That
+   * matters because this harness can host the server in its own process, and a
+   * client whose reconciliation is eating the CPU will starve it - at which
+   * point every number below measures the harness rather than the netcode.
+   */
+  firstSnapTick = -1;
+  firstSnapAt = 0;
+  lastSnapTick = -1;
+  lastSnapAt = 0;
+
   /** Prediction error samples, metres. */
   readonly errors: number[] = [];
   readonly replays: number[] = [];
@@ -134,7 +148,7 @@ class SimClient {
     const spawn = track.spawnGrid[0]!;
     this.prediction.spawn({ x: spawn.p[0], y: spawn.p[1], z: spawn.p[2] }, spawn.rotY);
 
-    this.ws = new WebSocket(`ws://127.0.0.1:${PORT}`);
+    this.ws = new WebSocket(process.env['NETCHECK_ATTACH'] ?? `ws://127.0.0.1:${PORT}`);
     this.ws.on('open', () => {
       this.send({ t: 'hello', v: PROTOCOL_VERSION, name: 'Netcheck', color: 0 });
     });
@@ -186,8 +200,9 @@ class SimClient {
         this.startReadyRetry();
         break;
       case 'state':
+        // The server repeats this once a second, so only a real change counts.
+        if (msg.state !== this.state && msg.state === 'grid') this.spawned = false;
         this.state = msg.state;
-        if (msg.state === 'grid') this.spawned = false;
         break;
       case 'join':
       case 'leave':
@@ -208,6 +223,12 @@ class SimClient {
   }
 
   private onSnapshot(msg: SnapMsg): void {
+    if (this.firstSnapTick < 0) {
+      this.firstSnapTick = msg.tick;
+      this.firstSnapAt = Date.now();
+    }
+    this.lastSnapTick = msg.tick;
+    this.lastSnapAt = Date.now();
     this.remote.push(msg, performance.now());
     this.others = msg.cars.filter((c) => c.id !== this.id).map((c) => ({ x: c.p[0], y: c.p[1], z: c.p[2] }));
 
@@ -322,13 +343,22 @@ async function main(): Promise<void> {
 
   // AI fills the grid so there are remote cars actually racing to measure.
   const aiFill = Number(process.env['AI_FILL'] ?? 6);
-  const server = new GameServer(track, { port: PORT, laps: 999, aiFill, staticDirs: [] });
-  server.start();
+  // Attach to a server already running elsewhere, so its loop cannot be starved
+  // by this process. NETCHECK_ATTACH=ws://host:port
+  const attach = process.env['NETCHECK_ATTACH'];
+  let server: GameServer | null = null;
+  if (!attach) {
+    server = new GameServer(track, { port: PORT, laps: 999, aiFill, staticDirs: [] });
+    server.start();
+  } else {
+    console.log(`attached to ${attach} (server runs in its own process)`);
+  }
 
   console.log(`netcheck: ${lag} +/-${jitter} ms latency, ${(loss * 100).toFixed(1)}% loss, ${seconds} s`);
   console.log(`track ${track.name}, 1 measured client + AI grid\n`);
 
   const client = new SimClient(track, { lag, jitter, loss });
+  const startedAt = Date.now();
 
   // Client loop: fixed steps at TICK_HZ, render sampling at 60 Hz. Driven off
   // one timer so the two stay in the relationship the browser has.
@@ -388,14 +418,28 @@ async function main(): Promise<void> {
   const staleRate = client.remote.stats.staleRate;
   const dtMs = client.frameDts.map((d) => d * 1000);
 
+  // The server and the measured client share this process. If the client's own
+  // physics starves the server's loop, everything below measures the harness
+  // rather than the netcode, so the server's achieved tick rate is reported
+  // first and nothing else should be read until it reads 60 Hz.
+  const snapWall = (client.lastSnapAt - client.firstSnapAt) / 1000;
+  const serverHz = snapWall > 1 ? (client.lastSnapTick - client.firstSnapTick) / snapWall : 0;
+  const tickOk = serverHz > TICK_HZ * 0.97;
+  void startedAt;
   console.log('\n--- results -------------------------------------------------');
-  const h = server.room.inputHealth;
+  const h = server?.room.inputHealth ?? null;
+  console.log(
+    `server tick rate       ${serverHz.toFixed(2)} Hz  ` +
+      `${tickOk ? 'ok' : 'STARVED - nothing below is a valid netcode measurement'}`,
+  );
   console.log(`inputs dropped by sim  ${client.dropped}`);
   console.log(
-    `server input queue     held ${h.held}/${h.samples} periods ` +
-      `(${((h.held / Math.max(1, h.samples)) * 100).toFixed(2)}%), ` +
-      `starved ${h.starved}, overflowed ${h.overflowed}, ` +
-      `mean depth ${(h.queueDepthSum / Math.max(1, h.samples)).toFixed(2)}`,
+    h === null
+      ? 'server input queue     (server is in another process; not visible here)'
+      : `server input queue     held ${h.held}/${h.samples} periods ` +
+        `(${((h.held / Math.max(1, h.samples)) * 100).toFixed(2)}%), ` +
+        `starved ${h.starved}, overflowed ${h.overflowed}, ` +
+        `mean depth ${(h.queueDepthSum / Math.max(1, h.samples)).toFixed(2)}`,
   );
   console.log(`\nPREDICTION (gate check 2)`);
   console.log(`  error p50            ${f3(e50)} m`);
@@ -406,6 +450,7 @@ async function main(): Promise<void> {
   console.log(`  hard snaps           ${client.prediction.stats.hardSnaps}`);
   console.log(`  corrections          ${client.prediction.stats.corrections}`);
   console.log(`  server holds seen    ${client.prediction.serverHolds}`);
+  console.log(`  replay inputs dropped ${client.prediction.stats.replayDropped}`);
   console.log(`  final pace scale     ${client.prediction.paceScale.toFixed(4)}x`);
   console.log(`  est. queue depth     ${client.prediction.queueDepth.toFixed(2)} inputs`);
   if (client.spikes.length) {
@@ -437,7 +482,7 @@ async function main(): Promise<void> {
   );
 
   client.close();
-  await server.stop();
+  if (server) await server.stop();
   process.exit(check2 && check3 ? 0 : 1);
 }
 

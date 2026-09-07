@@ -217,6 +217,19 @@ export class Ui {
     }
   }
 
+  /**
+   * Refresh the phase deadline without re-running the transition.
+   *
+   * The server repeats the current state once a second so a lost transition
+   * heals itself; re-running setState on those repeats would flash the banner.
+   * The timer is still worth taking, because it re-anchors a countdown that has
+   * been running off a local clock.
+   */
+  syncTimer(state: RaceState, timer: number | null): void {
+    if (state !== this.phase) return;
+    this.deadline = timer === null ? 0 : Date.now() + timer * 1000;
+  }
+
   /** Run the phase countdown down. Call once per rendered frame. */
   tick(): void {
     if (this.deadline === 0 || this.spectating) return;

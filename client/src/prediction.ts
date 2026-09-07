@@ -93,6 +93,27 @@ const PACE_MAX = 0.09;
 /** Depth is only trusted once a round-trip measurement exists. */
 const MIN_RTT_SAMPLES = 1;
 
+/**
+ * Hard ceiling on unacknowledged inputs, and so on replay work per snapshot.
+ *
+ * Reconciliation replays every unacknowledged input on every snapshot. At 30
+ * snapshots a second a backlog of 30 inputs is 60 physics steps per snapshot -
+ * 1800 extra steps a second on top of the 60 the client actually needs, thirty
+ * times the cost. That is a positive feedback loop and it closes: the replay
+ * starves the client's own loop, the client sends fewer inputs, the server's
+ * queue empties and stops acknowledging, the backlog grows, and the replay gets
+ * more expensive again. Measured going round that loop, prediction error went
+ * from under a metre to eleven and hard snaps from zero to seventy.
+ *
+ * Anything older than this is not worth replaying: the server has long since
+ * moved past it, and the right response to being that far behind is to take the
+ * server's state and stop pretending.
+ *
+ * MAX_PENDING_INPUTS in shared/constants.ts is 180 - three seconds - which is a
+ * sane bound on memory and a useless one on work.
+ */
+const MAX_REPLAY_INPUTS = 24;
+
 interface Pending {
   seq: number;
   input: CarInput;
@@ -127,6 +148,8 @@ export interface PredictionStats {
   pending: number;
   corrections: number;
   hardSnaps: number;
+  /** Inputs discarded rather than replayed, because the backlog was too deep. */
+  replayDropped: number;
   /** Set by reconcile() so a harness can inspect what produced a correction. */
   lastAckSeq: number;
   lastPending: number;
@@ -155,6 +178,7 @@ export class PredictedCar {
     pending: 0,
     corrections: 0,
     hardSnaps: 0,
+    replayDropped: 0,
     lastAckSeq: 0,
     lastPending: 0,
   };
@@ -235,6 +259,12 @@ export class PredictedCar {
     if (serverTick !== undefined) this.updatePacing(serverTick, ackSeq);
     // Everything up to ackSeq is now history.
     while (this.pending.length > 0 && this.pending[0]!.seq <= ackSeq) this.pending.shift();
+
+    // Bound the replay. See MAX_REPLAY_INPUTS.
+    if (this.pending.length > MAX_REPLAY_INPUTS) {
+      this.stats.replayDropped += this.pending.length - MAX_REPLAY_INPUTS;
+      this.pending.splice(0, this.pending.length - MAX_REPLAY_INPUTS);
+    }
 
     const predicted = this.car.readState();
     const authoritative: CarState = {
