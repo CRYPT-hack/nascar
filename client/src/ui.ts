@@ -32,6 +32,17 @@ export class Ui {
 
   private chosenColor = Math.floor(Math.random() * CAR_COLORS.length);
   private isReady = false;
+  private spectating = false;
+  /**
+   * Local deadline for the phase timer.
+   *
+   * `state` messages only arrive on a transition, so the countdown value in
+   * them is a single sample. Without running it down locally the lobby sits on
+   * "Starting in 25s" and the grid countdown freezes on "5", which reads as a
+   * hung server.
+   */
+  private phase: RaceState = 'lobby';
+  private deadline = 0;
 
   constructor(private readonly root: HTMLElement = document.body) {
     this.lobby = el('div', 'panel lobby');
@@ -128,17 +139,23 @@ export class Ui {
   }
 
   setState(state: RaceState, timer: number | null): void {
+    this.phase = state;
+    this.deadline = timer === null ? 0 : Date.now() + timer * 1000;
     const show = (text: string) => {
       this.banner.textContent = text;
       this.banner.style.display = 'block';
     };
     switch (state) {
       case 'lobby':
-        this.banner.style.display = 'none';
+        this.banner.textContent =
+          timer === null ? '' : `Starting in ${Math.ceil(timer)}s — ready up`;
+        this.banner.style.display = timer === null ? 'none' : 'block';
         this.results.style.display = 'none';
         this.isReady = false;
+        this.spectating = false;
         break;
       case 'grid':
+        this.spectating = false;
         show('Form up on the grid');
         this.roster.style.display = 'none';
         this.results.style.display = 'none';
@@ -158,18 +175,63 @@ export class Ui {
     }
   }
 
+  /** Run the phase countdown down. Call once per rendered frame. */
+  tick(): void {
+    if (this.deadline === 0 || this.spectating) return;
+    const left = Math.max(0, (this.deadline - Date.now()) / 1000);
+    if (this.phase === 'countdown') {
+      this.banner.textContent = left > 0.05 ? String(Math.ceil(left)) : 'GO';
+      this.banner.style.display = 'block';
+    } else if (this.phase === 'lobby') {
+      this.banner.textContent = `Starting in ${Math.ceil(left)}s — ready up`;
+      this.banner.style.display = 'block';
+      if (left <= 0) this.deadline = 0;
+    }
+  }
+
+  /** Race position, from the client-side standings. Null while not racing. */
+  setPosition(position: number | null, of: number): void {
+    this.ensureHud();
+    const el2 = this.hud.querySelector('.pos');
+    if (!el2) return;
+    el2.textContent = position === null ? '' : `P${position}/${of}`;
+  }
+
+  /**
+   * Shown when the server is running a race this client is not in. Arriving
+   * mid-race, or not readying up in time, means watching this one - which is a
+   * far better experience than being dropped onto a live circuit.
+   */
+  setSpectating(on: boolean, cars: number): void {
+    if (on === this.spectating) return;
+    this.spectating = on;
+    if (on) {
+      this.banner.textContent = `Race in progress (${cars} cars) — you are in the next one`;
+      this.banner.style.display = 'block';
+      this.roster.style.display = 'block';
+    } else {
+      this.banner.style.display = 'none';
+    }
+  }
+
   setLap(lap: number, total: number, lapMs: number, bestMs: number): void {
+    this.ensureHud();
     const l = this.hud.querySelector('.lap');
-    if (l) l.textContent = `Lap ${Math.min(lap + 1, total)}/${total}   last ${formatMs(lapMs)}   best ${formatMs(bestMs)}`;
+    if (l) {
+      l.textContent = `Lap ${Math.min(lap + 1, total)}/${total}   last ${formatMs(lapMs)}   best ${formatMs(bestMs)}`;
+    }
   }
 
   setSpeed(kmh: number): void {
-    let s = this.hud.querySelector('.speed');
-    if (!s) {
-      this.hud.append(el('div', 'lap'), el('div', 'speed'));
-      s = this.hud.querySelector('.speed');
-    }
+    this.ensureHud();
+    const s = this.hud.querySelector('.speed');
     if (s) s.textContent = `${Math.round(kmh)} km/h`;
+  }
+
+  /** The HUD rows are built once, on first use, in display order. */
+  private ensureHud(): void {
+    if (this.hud.childElementCount > 0) return;
+    this.hud.append(el('div', 'pos'), el('div', 'lap'), el('div', 'speed'));
   }
 
   showResults(results: ResultEntry[], myId: number): void {

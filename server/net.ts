@@ -52,6 +52,7 @@ export class GameServer {
   private readonly staticDirs: string[];
   private readonly trackUrl: string;
   private timer: NodeJS.Timeout | null = null;
+  private fatalReported = false;
 
   constructor(track: TrackData, opts: ServerOptions = {}) {
     this.port = opts.port ?? DEFAULT_PORT;
@@ -84,6 +85,27 @@ export class GameServer {
   // -------------------------------------------------------------------------
 
   start(): void {
+    // A port clash is the most likely thing to go wrong at a venue - a server
+    // left running from the last demo - and it otherwise surfaces as an
+    // unhandled 'error' event and a stack trace, which is the worst possible
+    // thing to be reading in front of an audience.
+    //
+    // The handler goes on both: ws re-emits the http server's errors on the
+    // WebSocketServer, and it is that copy which is unhandled and fatal.
+    const onFatal = (err: NodeJS.ErrnoException): void => {
+      if (this.fatalReported) return;
+      this.fatalReported = true;
+      if (err.code === 'EADDRINUSE') {
+        console.error(`Port ${this.port} is already in use.`);
+        console.error('Another race server is probably still running. Stop it, or set PORT.');
+      } else {
+        console.error(`Server failed to start: ${err.message}`);
+      }
+      process.exit(1);
+    };
+    this.http.on('error', onFatal);
+    this.wss.on('error', onFatal);
+
     this.http.listen(this.port, '0.0.0.0', () => {
       console.log(`race server listening on 0.0.0.0:${this.port}`);
       for (const a of localAddresses()) console.log(`  http://${a}:${this.port}`);

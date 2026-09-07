@@ -65,6 +65,17 @@ export const TICKS_PER_INPUT = TICK_HZ / INPUT_HZ;
  */
 const INPUT_BUFFER_TARGET = 2;
 
+/**
+ * How long the lobby waits once someone is ready, before starting without the
+ * players who have not readied up.
+ *
+ * Ten strangers at a hackathon do not all click a button at the same time, and
+ * requiring every one of them to means a single person who wandered off holds
+ * the whole grid hostage. Anyone not ready when this expires sits out the race
+ * and is on the grid for the next one.
+ */
+const LOBBY_WAIT_SECONDS = 25;
+
 /** A car is respawned after being stuck or inverted for this long. */
 const RESCUE_SECONDS = 5;
 /** Race is abandoned if nobody finishes within this long after the leader. */
@@ -98,7 +109,14 @@ export interface Entrant {
   color: number;
   ai: boolean;
   ready: boolean;
-  car: Car;
+  /**
+   * The car, or null when this entrant is not in the current race.
+   *
+   * Someone who arrives while a race is running, or who never readied up, has
+   * no car at all rather than a parked one. A parked car would be sitting on
+   * the grid, which is on the main straight, waiting to be hit at 200 km/h.
+   */
+  car: Car | null;
   lap: LapTracker;
   driver: AiDriver | null;
 
@@ -143,6 +161,8 @@ export class Room {
   private phaseTick = 0;
   private raceStartTick = 0;
   private leaderFinishTick = -1;
+  /** Tick the first player readied up on, or -1. Drives LOBBY_WAIT_SECONDS. */
+  private firstReadyTick = -1;
 
   /** Rolling tick-duration samples in ms, for the hour-12 gate. */
   readonly tickMs: number[] = [];
@@ -186,13 +206,16 @@ export class Room {
   join(name: string, colorWanted: number, ai = false): Entrant {
     const id = this.nextId++;
     const slot = this.freeSpawnSlot();
-    const car = new Car(this.world.world);
-    const spawn = this.track.spawnGrid[slot % this.track.spawnGrid.length]!;
-    car.reset({ x: spawn.p[0], y: spawn.p[1], z: spawn.p[2] }, spawn.rotY);
+
+    // A car only exists for someone actually in a race. Joining mid-race means
+    // watching this one and starting the next.
+    const car = this.state === 'lobby' ? this.makeCar(slot) : null;
 
     const lap = new LapTracker(this.world.query);
-    const p = car.body.translation();
-    lap.seed(this.world.query.locate(p.x, p.y, p.z));
+    if (car) {
+      const p = car.body.translation();
+      lap.seed(this.world.query.locate(p.x, p.y, p.z));
+    }
 
     const e: Entrant = {
       id,
@@ -221,10 +244,30 @@ export class Room {
     return e;
   }
 
+  /** Build a car sitting on the given grid slot. */
+  private makeCar(slot: number): Car {
+    const car = new Car(this.world.world);
+    const spawn = this.track.spawnGrid[slot % this.track.spawnGrid.length]!;
+    car.reset({ x: spawn.p[0], y: spawn.p[1], z: spawn.p[2] }, spawn.rotY);
+    return car;
+  }
+
+  /** Remove an entrant's car from the world. Safe to call when there is none. */
+  private dropCar(e: Entrant): void {
+    if (!e.car) return;
+    this.world.world.removeRigidBody(e.car.body);
+    e.car = null;
+  }
+
+  /** True when this entrant is taking part in the race currently running. */
+  isRacing(e: Entrant): boolean {
+    return e.car !== null;
+  }
+
   leave(id: number): void {
     const e = this.entrants.get(id);
     if (!e) return;
-    this.world.world.removeRigidBody(e.car.body);
+    this.dropCar(e);
     this.entrants.delete(id);
     this.hooks.broadcast({ t: 'leave', id, players: this.roster() });
     if (this.humanCount === 0) this.reset();
@@ -303,14 +346,15 @@ export class Room {
     }
     if (s === 'racing') {
       this.raceStartTick = this.tick;
-      const now = 0;
-      for (const e of this.entrants.values()) e.lap.start(now);
+      for (const e of this.entrants.values()) if (e.car) e.lap.start(0);
     }
     if (s === 'finished') {
       this.hooks.broadcast({ t: 'result', results: this.results() });
     }
     if (s === 'lobby') {
       this.removeAi();
+      this.firstReadyTick = -1;
+      this.leaderFinishTick = -1;
       for (const e of this.entrants.values()) e.ready = false;
       this.hooks.broadcast({ t: 'roster', players: this.roster() });
     }
@@ -321,15 +365,33 @@ export class Room {
   /** Seconds remaining in the current phase, or null if it has no timer. */
   private phaseTimer(): number | null {
     const elapsed = (this.tick - this.phaseTick) / TICK_HZ;
+    if (this.state === 'lobby') {
+      if (this.firstReadyTick < 0) return null;
+      return Math.max(0, LOBBY_WAIT_SECONDS - (this.tick - this.firstReadyTick) / TICK_HZ);
+    }
     if (this.state === 'countdown') return Math.max(0, COUNTDOWN_SECONDS - elapsed);
     if (this.state === 'grid') return Math.max(0, 3 - elapsed);
     if (this.state === 'finished') return Math.max(0, RESULTS_SECONDS - elapsed);
     return null;
   }
 
+  /**
+   * Form the grid.
+   *
+   * This is where entry to the race is decided: anyone ready (and every AI)
+   * gets a car, anyone else loses theirs and watches. That covers both the
+   * player who joined thirty seconds ago while a race was running and the one
+   * who has wandered off without readying up.
+   */
   private placeOnGrid(): void {
     let slot = 0;
     for (const e of this.entrants.values()) {
+      if (!e.ready && !e.ai) {
+        this.dropCar(e);
+        continue;
+      }
+      if (!e.car) e.car = this.makeCar(slot);
+
       const s = this.track.spawnGrid[slot % this.track.spawnGrid.length]!;
       e.spawnSlot = slot++;
       e.car.reset({ x: s.p[0], y: s.p[1], z: s.p[2] }, s.rotY);
@@ -360,7 +422,7 @@ export class Room {
   private removeAi(): void {
     for (const e of [...this.entrants.values()]) {
       if (e.ai) {
-        this.world.world.removeRigidBody(e.car.body);
+        this.dropCar(e);
         this.entrants.delete(e.id);
       }
     }
@@ -434,27 +496,29 @@ export class Room {
       }
     }
 
+    const racers: Entrant[] = [];
+    for (const e of this.entrants.values()) if (e.car) racers.push(e);
+
     const positions: V3[] = [];
     if (!frozen) {
-      for (const e of this.entrants.values()) {
-        const p = e.car.body.translation();
+      for (const e of racers) {
+        const p = e.car!.body.translation();
         positions.push({ x: p.x, y: p.y, z: p.z });
       }
     }
 
-    let i = 0;
-    for (const e of this.entrants.values()) {
+    for (let i = 0; i < racers.length; i++) {
+      const e = racers[i]!;
       let input: CarInput;
       if (frozen || e.finished) {
         input = NEUTRAL_INPUT;
       } else if (e.driver) {
         const others = positions.filter((_, k) => k !== i);
-        input = e.driver.update(e.car, FIXED_DT, others);
+        input = e.driver.update(e.car!, FIXED_DT, others);
       } else {
         input = e.current;
       }
-      e.car.step(input, FIXED_DT, this.world.ctx);
-      i++;
+      e.car!.step(input, FIXED_DT, this.world.ctx);
     }
 
     this.world.world.step();
@@ -476,7 +540,18 @@ export class Room {
     switch (this.state) {
       case 'lobby': {
         const humans = [...this.entrants.values()].filter((e) => !e.ai);
-        if (humans.length > 0 && humans.every((e) => e.ready)) this.setState('grid');
+        const ready = humans.filter((e) => e.ready);
+        if (ready.length === 0) {
+          this.firstReadyTick = -1;
+          break;
+        }
+        if (this.firstReadyTick < 0) this.firstReadyTick = this.tick;
+
+        // Everyone in: go now. Otherwise give the stragglers a bounded wait.
+        const waited = (this.tick - this.firstReadyTick) / TICK_HZ;
+        if (ready.length === humans.length || waited >= LOBBY_WAIT_SECONDS) {
+          this.setState('grid');
+        }
         break;
       }
       case 'grid':
@@ -486,7 +561,7 @@ export class Room {
         if (elapsed >= COUNTDOWN_SECONDS) this.setState('racing');
         break;
       case 'racing': {
-        const all = [...this.entrants.values()];
+        const all = [...this.entrants.values()].filter((e) => e.car);
         if (all.length > 0 && all.every((e) => e.finished)) {
           this.setState('finished');
         } else if (
@@ -506,7 +581,7 @@ export class Room {
   private updateProgress(): void {
     const nowMs = ((this.tick - this.raceStartTick) / TICK_HZ) * 1000;
     for (const e of this.entrants.values()) {
-      if (e.finished) continue;
+      if (e.finished || !e.car) continue;
       const p = e.car.body.translation();
       const loc = this.world.query.locate(p.x, p.y, p.z, e.hint);
       e.hint = loc.index;
@@ -540,7 +615,7 @@ export class Room {
     if (frozen) return;
     const limit = RESCUE_SECONDS * TICK_HZ;
     for (const e of this.entrants.values()) {
-      if (e.finished) continue;
+      if (e.finished || !e.car) continue;
       const bad = e.car.isInverted() || (e.car.speed < 1.5 && e.car.offTrackTicks > 30);
       e.stuckTicks = bad ? e.stuckTicks + 1 : 0;
       if (e.stuckTicks < limit) continue;
@@ -568,6 +643,7 @@ export class Room {
   snapshotCars(): CarSnap[] {
     const cars: CarSnap[] = [];
     for (const e of this.entrants.values()) {
+      if (!e.car) continue; // spectating: no car in the world, none on the wire
       const p = e.car.body.translation();
       const q = e.car.body.rotation();
       const v = e.car.body.linvel();
@@ -613,11 +689,13 @@ export class Room {
 
   /** Race order: most distance covered first, finishers ahead of everyone. */
   order(): Entrant[] {
-    return [...this.entrants.values()].sort((a, b) => {
-      if (a.finished !== b.finished) return a.finished ? -1 : 1;
-      if (a.finished && b.finished) return a.finishTick - b.finishTick;
-      return b.lap.raceDistance - a.lap.raceDistance;
-    });
+    return [...this.entrants.values()]
+      .filter((e) => e.car)
+      .sort((a, b) => {
+        if (a.finished !== b.finished) return a.finished ? -1 : 1;
+        if (a.finished && b.finished) return a.finishTick - b.finishTick;
+        return b.lap.raceDistance - a.lap.raceDistance;
+      });
   }
 
   results(): ResultEntry[] {

@@ -347,3 +347,47 @@ and no DNFs, so 6 humans + 4 AI, or 1 human + 9 AI, both work today.
   Instance A placeholders. They are marked for replacement, not extension.
 - No audio, no visual polish, no trackside geometry. All Instance B.
 - The venue recording (§9) has not been made.
+
+
+---
+
+## After the gate
+
+### 2026-09-07 — Race entry rules, so ten strangers actually get a race
+
+Three things stood between the working netcode and §11's "a judge opens a link
+and races 9 other people", all of them about people rather than physics.
+
+**A player who never readies up used to block the grid forever.** The lobby
+required every human to be ready. Ten people at a hackathon do not all click a
+button at the same time, and one who wandered off held the whole grid hostage.
+Now: everyone ready starts immediately, otherwise a 25-second wait starts from
+the first ready and the race goes without the stragglers.
+
+**Joining mid-race used to drop you onto a live circuit.** `join()` created a
+car on a grid slot regardless of what the room was doing — and the grid is on
+the main straight, so a latecomer's parked car was waiting to be hit at
+200 km/h. An entrant's car is now `Car | null`: it exists only for someone in
+the race. Arriving mid-race means no car at all, no entry in the snapshot, and a
+spectator camera on the leader until the next grid forms.
+
+**Race position was computed but never shown.** The server has it in
+`Room.order()`; nothing sent it. Rather than unfreeze the snapshot shape, the
+client recomputes it from `lap`, `cp` and position via `TrackQuery` —
+`client/src/standings.ts`. `npm test` asserts it agrees with the server's own
+ordering mid-race.
+
+That last one had a bug worth recording, because it is the same shape as the
+track-generator sign error: **the grid sits behind the start line**, so a car
+that has not moved reads a lap-distance near the *full lap length* while its lap
+count is still zero. Adding those together put a stationary car ahead of the
+leader — it showed up in the browser as a parked car holding P5 with a gap of
+−1971 m, a whole lap of Interlagos. A car that has passed no checkpoint cannot
+be most of the way round, so that case now subtracts a lap.
+
+Also: `EADDRINUSE` used to kill the server with a stack trace, which is the
+worst thing to be reading in front of an audience. It now prints two sentences.
+The handler has to go on the `WebSocketServer` as well as the http server,
+because `ws` re-emits the http error and it is that copy which is fatal.
+
+`npm test` — 33 checks, ~40 s.

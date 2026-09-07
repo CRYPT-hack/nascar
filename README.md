@@ -63,11 +63,16 @@ Nothing here asserts; everything prints numbers you are expected to read. The
 hour-12 gate (HANDOFF.md §7) is graded from these.
 
 ```bash
+npm test                                   # race logic: lobby, grid entry, laps, standings
 npx tsx tools/drivetest.ts interlagos      # vehicle: accel, braking, grip, drop, contact
 npx tsx tools/laptest.ts interlagos 10 3   # 10 AI cars, 3 laps: is the track drivable
 npx tsx tools/loadtest.ts 10 600           # gate 1 and 5: tick rate, headroom, memory
 npx tsx tools/netcheck.ts 100 20 0.02 90   # gate 2 and 3: prediction error, smoothness
 ```
+
+`npm test` is the fast one (~40 s) and the one to run after any change to
+`server/room.ts`. It drives a `Room` through its state machine with no sockets
+and asserts the rules that decide whether ten strangers actually get a race.
 
 `netcheck` takes `lagMs jitterMs loss seconds` and runs the real client modules
 against the real server over a real socket. It cannot be run in a browser:

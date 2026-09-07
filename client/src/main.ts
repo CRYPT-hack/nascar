@@ -33,6 +33,7 @@ import { NetStats } from './netstats';
 import { INPUT_REDUNDANCY, PredictedCar } from './prediction';
 import { RemoteCars } from './remote';
 import { CarView, Scene } from './scene';
+import { Standings } from './standings';
 import { Ui } from './ui';
 
 /** Never simulate more than this many fixed steps in one frame. */
@@ -61,6 +62,13 @@ class Game {
   private colors = new Map<number, number>();
 
   private readonly recentInputs: InputMsg[] = [];
+  private standings!: Standings;
+  /**
+   * True when the server is running a race this client is not in: they arrived
+   * after it started, or did not ready up in time. There is no car for them in
+   * the snapshot, so there is nothing to predict and nothing to drive.
+   */
+  private spectating = false;
   private accumulator = 0;
   private lastFrame = 0;
   private fps = 60;
@@ -80,6 +88,7 @@ class Game {
     this.camera = new ChaseCamera(innerWidth / innerHeight);
     this.prediction = new PredictedCar(this.rw);
     this.remote = new RemoteCars(this.rw);
+    this.standings = new Standings(this.rw.query);
 
     const spawn = this.track.spawnGrid[0]!;
     this.prediction.spawn({ x: spawn.p[0], y: spawn.p[1], z: spawn.p[2] }, spawn.rotY);
@@ -179,9 +188,25 @@ class Game {
 
   private onSnapshot(msg: Extract<ServerMsg, { t: 'snap' }>): void {
     this.remote.push(msg, performance.now());
+    const rows = this.standings.update(msg.cars);
 
     const mine = msg.cars.find((c) => c.id === this.myId);
-    if (!mine) return;
+    if (!mine) {
+      // No car of ours in the race. Watch it, and be on the grid for the next.
+      if (!this.spectating) {
+        this.spectating = true;
+        this.spawned = false;
+        this.camera.reset();
+      }
+      this.ui.setSpectating(true, rows.length);
+      return;
+    }
+    if (this.spectating) {
+      this.spectating = false;
+      this.ui.setSpectating(false, rows.length);
+      this.camera.reset();
+    }
+    this.ui.setPosition(this.standings.positionOf(this.myId), rows.length);
 
     if (!this.spawned) {
       // First state we have ever had for this car, or the first after a grid
@@ -219,6 +244,14 @@ class Game {
     this.accumulator += dt * this.prediction.paceScale;
     let steps = 0;
     while (this.accumulator >= FIXED_DT && steps < MAX_CATCHUP_STEPS) {
+      // A spectator has no car in the server's world. Predicting one anyway
+      // would drive a ghost nobody else can see and pile up unacknowledged
+      // inputs for a car that does not exist.
+      if (this.spectating) {
+        this.accumulator -= FIXED_DT;
+        steps++;
+        continue;
+      }
       this.prediction.fixedStep((seq) => this.sampleAndSend(seq));
       this.accumulator -= FIXED_DT;
       steps++;
@@ -227,6 +260,7 @@ class Game {
 
     this.prediction.updateVisual(dt);
     if (this.conn) this.prediction.setRtt(this.conn.rtt);
+    this.ui.tick();
     this.draw(now, dt);
   }
 
@@ -260,11 +294,13 @@ class Game {
     const localPos = this.prediction.renderPosition();
     const localRot = this.prediction.renderRotation();
 
-    // Local car.
-    if (this.myId >= 0) {
+    // Local car. Hidden entirely while spectating - there is no such car.
+    if (this.myId >= 0 && !this.spectating) {
       const view = this.viewFor(this.myId, this.myColor, true);
       view.setPose(localPos, localRot);
       view.setSteer(this.prediction.car.readouts[0]?.steerAngle ?? 0);
+    } else if (this.spectating) {
+      this.views.get(this.myId)?.setVisible(false);
     }
 
     // Remote cars, rendered INTERP_DELAY_MS in the past.
@@ -283,10 +319,18 @@ class Game {
       this.views.delete(id);
     }
 
-    const v = this.prediction.car.body.linvel();
-    this.camera.update(dt, localPos, localRot, { x: v.x, y: v.y, z: v.z } as V3);
-
-    this.ui.setSpeed(this.prediction.car.speed * 3.6);
+    if (this.spectating) {
+      // Follow whoever is leading, so a waiting player watches the race rather
+      // than an empty stretch of track.
+      const leader = this.standings.leaderId();
+      const pose = leader === null ? null : this.remote.poseOf(leader, now);
+      if (pose) this.camera.update(dt, pose.p, pose.q, pose.v);
+      this.ui.setSpeed(Math.hypot(pose?.v.x ?? 0, pose?.v.z ?? 0) * 3.6);
+    } else {
+      const v = this.prediction.car.body.linvel();
+      this.camera.update(dt, localPos, localRot, { x: v.x, y: v.y, z: v.z } as V3);
+      this.ui.setSpeed(this.prediction.car.speed * 3.6);
+    }
     this.stats.update({
       fps: this.fps,
       rtt: this.conn?.rtt ?? 0,
