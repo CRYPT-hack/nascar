@@ -646,8 +646,17 @@ const r4 = (n: number) => Math.round(n * 10000) / 10000;
 
 /** Never trust a client-supplied display name. */
 function sanitizeName(name: string, id: number): string {
-  const clean = String(name ?? '')
-    .replace(/[ -<>]/g, '')
+  // Filtered by code point rather than by a regular expression: writing a
+  // character class over control characters means putting escape sequences in
+  // the source, and one round-trip through a tool that normalises them leaves
+  // real control bytes embedded in this file. This says the same thing and
+  // cannot be corrupted that way.
+  const clean = Array.from(String(name ?? ''))
+    .filter((ch) => {
+      const c = ch.codePointAt(0) ?? 0;
+      return c >= 32 && c !== 127 && ch !== '<' && ch !== '>';
+    })
+    .join('')
     .trim()
     .slice(0, 16);
   return clean.length > 0 ? clean : `Driver ${id}`;
