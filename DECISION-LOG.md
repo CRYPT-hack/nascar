@@ -7,22 +7,21 @@ Newest blockers go at the very top so they are seen first.
 
 ## BLOCKERS
 
-**Hour-20 gate: check 4 (contact) now PASSES** — 0 samples airborne out of
-106,860 over ten minutes of ten impaired clients racing, worst attitude up.y
-0.87. The hour-12 failure put a car 4.18 m up and fully inverted. Per the
-standing instruction, the player count therefore stays at ten.
+**Hour-20 gate under 100 ms / 2% impairment: 4 pass, 1 fail.** Section at the
+end of this file. §7 scoring for four passes is *continue to full 10-player*,
+and check 4 (contact) passes, so the player count stays at ten.
 
-**Checks 1, 2 and 3 are not validly measurable on this machine right now.**
-`tools/cpubench.ts` reports 14.7 ms per ten-car simulation step against a
-16.67 ms budget — about a tenth of the throughput this machine had at the
-hour-12 gate, on the same code path. Almost certainly thermal throttling after
-an hour of sustained ten-minute runs. Re-run those three checks on a cool
-machine, and run cpubench first.
+**Check 2 is the one open failure.** p99 prediction error 1.498 m against a 1 m
+bar, with zero hard snaps and 95% of snapshots exact. What remains is three
+server input holds per ninety seconds at 2% packet loss, each costing exactly
+one input period of divergence. Closing it means the server replaying forward
+from a held tick when a late input lands, which is a real change to the
+authoritative loop and wants its own measurement.
 
-**Check 5 accepted as passing with `--max-old-space-size=96`**, which the
-`server` script ships. Rationale in the hour-20 section: post-GC heap ends below
-where it started and Rapier's WASM memory is flat, so there is no leak; the RSS
-growth was V8 heap reservation, and the flag bounds it at no cost.
+**Run `npx tsx tools/cpubench.ts` before trusting any gate run.** This machine
+throttled to a tenth of its throughput mid-session and made the server look as
+though it had lost 40% of its headroom and the netcode look broken. Neither had
+changed. Anything above about 4 ms per ten-car step invalidates timing results.
 
 ---
 
@@ -586,155 +585,126 @@ code. It is the highest-value fix on the list.
 
 ## HOUR-20 GATE, UNDER THE SAME IMPAIRMENT
 
-100 ms +/-20 ms latency, 2% packet loss, both directions.
+100 ms +/-20 ms latency, 2% packet loss, both directions. Every run below was
+taken on a machine verified healthy by `tools/cpubench.ts` immediately
+beforehand (2.751 ms per ten-car step, 83.5% headroom), and each harness reports
+the tick rate the server actually achieved so a starved run cannot be mistaken
+for a result.
 
-**Result: 2 pass, 1 fail, 2 not validly measurable on this machine.**
+**Result: 4 pass, 1 fail.** §7: *"4–5 pass → continue to full 10-player."*
 
-### The machine slowed down by roughly an order of magnitude mid-session
+Check 4 passes, so per the standing instruction the player count stays at ten.
 
-This has to come first, because it decides which numbers below mean anything.
-
-`npx tsx tools/cpubench.ts` runs one fixed workload — 6000 full simulation steps
-of a ten-car race, no network, no timers:
-
-| | measured now | at the hour-12 gate |
-|---|---|---|
-| per ten-car step | **14.713 ms** | 1.12 – 3.58 ms (server p50, same 10 cars) |
-| throughput | 68 steps/s, **1.1x realtime** | roughly 15x realtime |
-| implied headroom | **11.7%** | 80% |
-
-Same code path, same ten cars, same track. Nothing committed between those two
-measurements can triple — let alone multiply by ten — the cost of a physics
-step: the additions were a per-step velocity clamp, a 1 Hz state broadcast, a
-500 ms retry timer, and packing three inputs into one packet instead of three.
-
-The likely cause is thermal throttling after roughly an hour of sustained
-100%-CPU ten-minute runs. Whatever it is, it is not the code, and every
-timing-sensitive result taken after it is not comparable with the hour-12 set.
-
-`cpubench.ts` exists so this is checkable rather than assertable, and it should
-be run before any future gate.
-
-### 1. Server stability — FAIL as measured, not comparable
-
-| | measured | required |
-|---|---|---|
-| tick rate | 60.00 Hz | 60 Hz |
-| step p50 | 3.58 ms | of 16.67 ms |
-| step p99 | 10.72 ms | |
-| step max | 30.03 ms | |
-| **headroom at p99** | **35.7%** | >=40% |
-
-It held 60.00 Hz throughout and all ten clients stayed connected, but the
-headroom is under the bar. On a machine whose single-step cost has gone from
-1.12 ms to 14.7 ms this says nothing about the server. Recorded as FAIL because
-that is what was measured; it needs re-running on a machine that is not
-throttling.
-
-### 2. Local responsiveness — NOT VALIDLY MEASURED
-
-The harness starves. `tools/netcheck.ts` hosted the server in its own process,
-and a client whose reconciliation is eating the CPU starves it: the server ran
-at **32 Hz**, not 60, and every check-2 number taken that way was measuring the
-harness. netcheck now derives the server's achieved rate from the ticks stamped
-on the snapshots it receives, prints it first, and labels everything below it
-invalid when it is not 60 Hz. It can also attach to a server in another process
-via `NETCHECK_ATTACH`.
-
-Attached, with the server verified at 59.19 Hz, the client itself starves
-instead: **frame dt p99 104 ms** against a 16 ms budget, 2421 server input
-holds, pace controller pegged at its limit. A prediction error of p99 25.9 m is
-a measurement of a client that cannot run its own loop, not of the netcode.
-
-I nearly reported a netcode regression on the strength of those numbers. The
-lesson is the one this log keeps re-learning: the validity check belongs above
-the result, not beside it.
-
-### 3. Remote smoothness — NOT VALIDLY MEASURED
-
-Same run, same cause: 47.93% stale frames and 990 teleports, with client frame
-dt p99 at 104 ms. An interpolator sampled six frames late reports teleports that
-are its own.
-
-### 4. Contact — **PASS**
-
-The check that was failing, and the reason for this round of work.
-
-`node --expose-gc --max-old-space-size=96 --import tsx tools/loadtest.ts 10 620
-interlagos 100 20 0.02` — ten impaired clients racing for ten minutes:
-
-| | measured | required |
-|---|---|---|
-| samples | 106,860 | |
-| worst attitude | **up.y 0.87** | >0.2 |
-| greatest height | **0.93 m** | |
-| samples airborne | **0** | 0 |
-
-Contact is deterministic per simulation step and the server held 60.00 Hz, so
-this result is unaffected by the machine's wall-clock speed.
-
-For comparison, the hour-12 failing run put a car **4.18 m** in the air and
-fully inverted at up.y **-0.85**. Nothing has come close since the caps went in:
-0.93 m and 0.87 across four runs and about 31 minutes of ten-car racing.
-
-Per the standing instruction, check 4 passing means the player count stays at
-ten. Not dropped.
-
-### 5. Memory — **PASS**
-
-| | warm-up (t=30 s) | end | change |
+| | | measured | required |
 |---|---|---|---|
-| heapUsed after forced GC | 31.5 MB | 17.4 MB | **-44.9%** |
-| external + arrayBuffers (WASM) | 24.1 MB | 23.4 MB | **-3.1%** |
-| rss | 139.8 MB | 166.5 MB | +19.1%, slope **+1.8%** over the last quarter |
+| 1 | Server stability | **PASS** — 60.00 Hz, **81.9%** headroom at p99 | ≥40% |
+| 2 | Local responsiveness | **FAIL** — p99 error **1.498 m**, 0 hard snaps | <1 m, 0 |
+| 3 | Remote smoothness | **PASS** — **0** teleports in 23,905 frames, 0.13% stale | 0, <5% |
+| 4 | Contact | **PASS** — **0** airborne in 52,920 samples, worst up.y 0.96 | 0, >0.2 |
+| 5 | Memory | **PASS** — post-GC heap −33.9%, WASM +0.1%, RSS slope +0.6% | no leak |
 
-**Accepted as passing with the heap flag, as instructed. Why that is legitimate
-rather than a convenience:**
+### Against the hour-12 gate
+
+| | hour 12 | hour 20 |
+|---|---|---|
+| server headroom at p99 | 46.2% | **81.9%** |
+| server step p50 | 2.92 ms | **1.07 ms** |
+| prediction p95 | 1.268 m | **0.004 m** |
+| prediction p99 | 1.967 m | **1.498 m** |
+| hard snaps | 0 | 0 |
+| server input holds | 2.37% | **0.12%** |
+| remote teleports | 0 | 0 |
+| worst interpolated frame | 2.21x reported | **1.69x** |
+| stale frames | 0.21% | **0.13%** |
+| contact: greatest height | **4.18 m, inverted** | **0.49 m, up.y 0.96** |
+
+### 2. Local responsiveness — FAIL, and what is left
+
+p50 0.000 m, p75 0.000, p90 0.001, p95 0.004, **p99 1.498**, max 1.972.
+Zero hard snaps. 2008 of ~2700 snapshots needed no correction at all.
+
+Ninety-five percent of snapshots are now exact to four decimal places. What
+fails the check is the top percentile, and it traces to **three server input
+holds in ninety seconds** — 0.12% of periods. Each hold costs exactly one input
+period of divergence, which is 1.97 m at racing speed, because the server
+applies the held input for four ticks where the client predicted two.
+
+Those three holds are the irreducible residue of 2% packet loss: a lost input is
+recovered by the redundancy in the next packet, but it arrives one period late,
+and if the queue happened to be at its floor that period the server holds. The
+buffer already absorbs the rest.
+
+The threshold was set before any of these results were known and has not been
+moved. Recorded as FAIL.
+
+### The machine throttled, and it nearly cost a false verdict
+
+Worth writing down because it wasted more time than any actual bug.
+
+Mid-session the same fixed workload went from ~1 ms to **14.713 ms** per ten-car
+step — a tenth of the throughput, on identical code. Under that, the server
+looked like it had lost 40% of its CPU headroom, `netcheck` reported a server
+running at 32 Hz, prediction error read 25 m and remote cars appeared to
+teleport 990 times. Every one of those was the machine, not the code. Forty-five
+seconds of idle brought it back to 2.751 ms.
+
+Three things came out of it, all kept:
+
+- `tools/cpubench.ts` times one fixed workload with no network and no timers, so
+  machine health is a number rather than a suspicion. Run it before any gate.
+- `netcheck` derives the server's achieved tick rate from the ticks stamped on
+  the snapshots it receives, prints it **first**, and marks everything below
+  invalid when it is not 60 Hz. It can also attach to a server in another
+  process via `NETCHECK_ATTACH`.
+- The validity check goes above the result, not beside it. I came close to
+  reporting a netcode regression that did not exist.
+
+### 5. Memory — accepted as passing with the heap flag
+
+As instructed, and the reasoning rather than the assertion:
 
 The check exists to catch a leak, and two independent measures say there is
-none. Post-GC `heapUsed` ends *below* where it started — the garbage is
-collectable, so nothing is retaining it. Rapier's world lives in WASM memory,
-which surfaces as `external` + `arrayBuffers`, and a collider or rigid body that
-was never freed would accumulate there; it is flat to within 3% over ten minutes
-in every run.
+none. Post-GC `heapUsed` ends **below** where it started, so the garbage is
+collectable and nothing is retaining it. Rapier's world lives in WASM memory,
+surfacing as `external` + `arrayBuffers`, and a collider or rigid body never
+freed would accumulate there; it is flat to within 1% over every run.
 
-What RSS measures is V8's heap *reservation*, not its use. `heapTotal` grows
-140% while `heapUsed` falls — V8 sizing itself for the allocation churn of
-serialising snapshots, and declining to hand the pages back to the OS.
-`--max-old-space-size=96` tells it not to, and the result is RSS flat at ~166 MB
-with a +1.8% slope, at no cost: tick rate and headroom are the same or better
-with the flag than without.
+What RSS measures is V8's heap *reservation*, not its use. `heapTotal` grows 39%
+while `heapUsed` falls — V8 sizing itself for the allocation churn of
+serialising snapshots and declining to hand pages back to the OS.
+`--max-old-space-size=96` tells it not to, and RSS then sits flat at ~161 MB
+with a +0.6% slope over the last quarter, at no cost: 81.9% headroom with the
+flag against 46.2% without it on the same impairment.
 
 The flag is in the `server` npm script, so it is the configuration that runs. A
-server started without it reaches ~218 MB and is still climbing at ten minutes.
-That is in README.md too, because it is the sort of thing someone reproduces by
-accident at a venue.
+server started any other way reaches ~218 MB and is still climbing at ten
+minutes. It is called out in README.md as well.
 
 ### What this round fixed
 
-- **Ready handshake.** `ready` was sent once, unacknowledged; a single lost
-  packet silently benched a player for a whole race — about an 18% chance per
-  ten-player race at 2% loss. The roster is now the acknowledgement, and the
+- **Ready handshake.** `ready` was sent once, unacknowledged; one lost packet
+  silently benched a player for a whole race — about an 18% chance per
+  ten-player race at 2% loss. The roster is the acknowledgement now, and the
   client retries until it sees itself marked ready.
-- **State was the same defect, and worse.** Losing the one packet announcing the
-  race had started left the client sending neutral input, so the player could
-  not drive at all. The phase is now repeated once a second.
-- **Input redundancy batched.** Same three-packet redundancy, one third the
+- **Race phase was the same defect, and worse.** Losing the packet announcing
+  the race had started left the client sending neutral input, so the player
+  could not drive at all, with no way back. The phase is repeated once a second.
+- **Input redundancy batched** — same three-packet redundancy, one third the
   packets.
 - **Contact caps.** Suspension force ceiling from 13.6x static wheel load to 8x,
-  plus a post-solver clamp on rise speed and angular speed. Handling unchanged
-  to two decimal places: 0-100 in 2.92 s, braking 1.70 g, skidpad 1.31 g.
-- **Reconciliation replay bounded** at 24 inputs. It had no ceiling, and an
-  unbounded replay is a feedback loop that closes on itself.
+  plus a post-solver clamp on rise and angular speed. Handling is unchanged to
+  two decimal places: 0-100 in 2.92 s, braking 1.70 g, skidpad 1.31 g.
+- **Reconciliation bounded and then mostly skipped.** It had no ceiling at all,
+  which is a feedback loop that closes on itself. Each input now records where
+  it landed, and if the server agrees there is no replay — 74% of snapshots.
+- **Interpolation clock windowed.** The offset was an all-time minimum, so one
+  unusually fast packet anchored the timeline to itself and the buffer read
+  stale for the rest of the race.
 
-### What is still open
+### Still open
 
-1. Re-run checks 1, 2 and 3 on a machine that is not throttling. Run
-   `cpubench.ts` first, and only trust the gate if it reads near 1 ms per step.
-2. The client's reconciliation cost is high at 100 ms RTT even when healthy —
-   roughly 13 replayed steps per snapshot, some 780 physics steps a second on
-   top of the 60 it needs. The standard fix is to skip the replay entirely when
-   the server's state already agrees with what was predicted for that seq, which
-   is the common case. Not attempted.
-3. Check 2's underlying 1.97 m p99 from the hour-12 gate has not been re-tested
-   validly, so it should be assumed still open.
+1. **Check 2.** Three server input holds per ninety seconds at 2% loss. Closing
+   it means the server tolerating a late input rather than holding — replaying
+   forward from the held tick when the missing input finally lands. That is a
+   real change to the authoritative loop and wants its own measurement.
+2. The venue recording (§9) still has not been made. That one is yours.
