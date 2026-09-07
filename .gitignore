@@ -12,3 +12,6 @@ recordings/
 # exact duplicate of models/original_stock_car_pack/. All three stay on disk.
 models/*.zip
 models/stock_car_pack/
+
+# Recorded play sessions (RECORD=<file>), local only.
+session*.jsonl

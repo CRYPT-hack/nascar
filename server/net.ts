@@ -11,6 +11,7 @@
  */
 
 import { createReadStream, existsSync, statSync } from 'node:fs';
+import { appendFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { networkInterfaces } from 'node:os';
 import { extname, join, normalize, resolve } from 'node:path';
@@ -59,6 +60,9 @@ export class GameServer {
   private readonly trackUrl: string;
   private timer: NodeJS.Timeout | null = null;
   private heartbeat: NodeJS.Timeout | null = null;
+  private recorder: NodeJS.Timeout | null = null;
+  /** Set by RECORD=<file>. Absent means every telemetry path is inert. */
+  private readonly recordTo = process.env['RECORD'] ?? '';
   private fatalReported = false;
 
   constructor(track: TrackData, opts: ServerOptions = {}) {
@@ -123,6 +127,7 @@ export class GameServer {
     });
     this.startLoop();
     this.startHeartbeat();
+    this.startRecording();
   }
 
   async stop(): Promise<void> {
@@ -130,6 +135,8 @@ export class GameServer {
     this.timer = null;
     if (this.heartbeat) clearInterval(this.heartbeat);
     this.heartbeat = null;
+    if (this.recorder) clearInterval(this.recorder);
+    this.recorder = null;
     for (const ws of this.sockets.values()) ws.close();
     await new Promise<void>((r) => this.wss.close(() => r()));
     await new Promise<void>((r) => this.http.close(() => r()));
@@ -199,6 +206,71 @@ export class GameServer {
     }, HEARTBEAT_MS);
     // Never hold the process open for a heartbeat.
     this.heartbeat.unref?.();
+  }
+
+  /** Append one JSON line. Never throws: a recorder must not break a race. */
+  private write(line: Record<string, unknown>): void {
+    if (!this.recordTo) return;
+    try {
+      appendFileSync(this.recordTo, JSON.stringify(line) + '\n');
+    } catch {
+      /* a full disk is not worth ending the session over */
+    }
+  }
+
+  /**
+   * Session recorder, server half. Off unless RECORD=<file> is set.
+   *
+   * Samples once a second: what the simulation is doing, and what each human
+   * car is doing inside it. The client posts its own half to /telemetry, and
+   * both land in the same file against the same wall clock, so a stutter on
+   * screen can be lined up against what the server thought was happening.
+   */
+  private startRecording(): void {
+    if (!this.recordTo) return;
+    this.write({
+      src: 'server',
+      kind: 'start',
+      at: Date.now(),
+      track: this.room.track.name,
+      node: process.version,
+    });
+    this.recorder = setInterval(() => {
+      const ms = this.room.tickMs;
+      const sorted = [...ms].sort((a, b) => a - b);
+      const at = (q: number) => sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * q))] ?? 0;
+      const humans = [];
+      for (const e of this.room.entrants.values()) {
+        if (e.ai || !e.car) continue;
+        const p = e.car.body.translation();
+        humans.push({
+          id: e.id,
+          name: e.name,
+          lap: e.lap.lap,
+          cp: e.lap.cp,
+          speed: +(e.car.speed * 3.6).toFixed(1),
+          surface: e.car.surface,
+          offTrack: e.car.offTrackTicks,
+          stuck: e.stuckTicks,
+          upY: +e.car.up().y.toFixed(3),
+          p: [+p.x.toFixed(2), +p.y.toFixed(2), +p.z.toFixed(2)],
+          finished: e.finished,
+        });
+      }
+      this.write({
+        src: 'server',
+        kind: 'sample',
+        at: Date.now(),
+        tick: this.room.tick,
+        state: this.room.state,
+        entrants: this.room.entrants.size,
+        stepP50: +at(0.5).toFixed(2),
+        stepP99: +at(0.99).toFixed(2),
+        rss: Math.round(process.memoryUsage().rss / 1048576),
+        humans,
+      });
+    }, 1000);
+    this.recorder.unref?.();
   }
 
   private onConnection(ws: WebSocket): void {
@@ -323,6 +395,26 @@ export class GameServer {
   private serveStatic(req: IncomingMessage, res: ServerResponse): void {
     const url = new URL(req.url ?? '/', 'http://localhost');
     let path = decodeURIComponent(url.pathname);
+
+    // The client half of the recorder posts here. Answered even when recording
+    // is off, so a page opened with ?rec=1 against a plain server is harmless.
+    if (path === '/telemetry' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => {
+        body += c;
+        if (body.length > 65536) req.destroy();
+      });
+      req.on('end', () => {
+        try {
+          this.write({ ...(JSON.parse(body) as Record<string, unknown>), at2: Date.now() });
+        } catch {
+          /* a malformed beacon is not worth a response code */
+        }
+        res.writeHead(204).end();
+      });
+      return;
+    }
+
     if (path === '/') path = '/index.html';
 
     // Reject anything that escapes the served root before touching the disk.

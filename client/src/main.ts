@@ -31,6 +31,7 @@ import { Connection, defaultServerUrl, netSimFromQuery } from './connection';
 import { InputSource } from './input';
 import { NetStats } from './netstats';
 import { INPUT_REDUNDANCY, PredictedCar } from './prediction';
+import { recordingRequested, startRecording } from './record';
 import { RemoteCars } from './remote';
 import { preloadCarModels } from './render/car-mesh';
 import { CarView, Scene } from './scene';
@@ -127,6 +128,23 @@ class Game {
     this.ui.showLobby();
 
     document.getElementById('boot')?.remove();
+
+    // ?rec=1 only. Posts a line a second to the server so a session can be read
+    // back afterwards; the interesting failures are client-side and the server
+    // cannot see any of them.
+    if (recordingRequested(location.search)) {
+      startRecording(() => ({
+        fps: +this.fps.toFixed(1),
+        rtt: this.conn?.rtt ?? 0,
+        dropped: this.conn?.dropped ?? 0,
+        state: this.state,
+        cars: this.views.size,
+        spectating: this.spectating,
+        speedKmh: +(this.prediction.car.speed * 3.6).toFixed(1),
+        pred: this.prediction.stats,
+        remote: this.remote.stats,
+      }));
+    }
 
     this.lastFrame = performance.now();
     requestAnimationFrame((t) => this.frame(t));
