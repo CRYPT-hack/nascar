@@ -36,8 +36,8 @@ There is no open blocker.
 | Interlagos centreline, widths, elevation, banking | done |
 | Surface types (asphalt / kerb / grass / gravel) with friction tags | done |
 | Skybox, barriers, run-off areas, basic trackside geometry | done |
-| HUD: position, lap counter, lap time, speed, draft indicator | done, **not yet wired into the game** |
-| Lobby / results screen | done, **not yet wired into the game** |
+| HUD: position, lap counter, lap time, speed, draft indicator | done, **in the game** |
+| Lobby / results screen | done, **in the game** |
 
 ### Numbers
 
@@ -64,26 +64,23 @@ CHANGELOG-SHARED.md; neither changes a field, type or wire shape.
 
 ## 3. Left to do
 
-### Integration with Instance A — the main remaining work
+### ~~Integration with Instance A~~ — done
 
-A's README says: *"`client/src/scene.ts` and `client/src/ui.ts` are placeholders
-marked for replacement, not extension."* That replacement has **not happened
-yet**. Right now the game entry (`index.html` → `client/src/main.ts`) still uses
-A's placeholders, and everything in §2 above is only reachable through
-`/preview.html`.
+Instance A's `client/src/scene.ts` and `client/src/ui.ts` were placeholders
+marked for replacement. Both are now replaced, keeping the exact public API
+`main.ts` calls, so no netcode wiring changed. The game entry (`index.html`)
+draws the real environment and HUD; `/preview.html` remains as the harness.
 
-Concretely:
+Verified by playing it: join, roster, ready, FORM UP, countdown, GO, the banner
+clearing itself, and the lap clock running against the live server.
 
-1. Point `main.ts` at `client/src/render/` instead of `client/src/scene.ts`,
-   so the game gets the materials, sky, trackside and scenery.
-2. Replace `client/src/ui.ts` with `client/src/hud/`, driving `hud.update()`
-   from the snapshot stream and `screens.showLobby()/showResults()` from the
-   `join`/`roster`/`result` messages.
-3. Reconcile the cross-section constants (below) so the visible road sits on the
-   colliders.
+Still open in the same area:
 
-This is the difference between "the visuals exist" and "the visuals are in the
-game", and it is the single highest-value thing left in my scope.
+- `setDrafting()` exists on `Ui` but nothing calls it — the draft indicator will
+  stay dark until slipstream detection lands. That is a physics question, so it
+  is Instance A's to set.
+- The HUD has still never been seen with ten cars and real positions; only one
+  local car plus AI fill.
 
 ### Cross-section constants disagree
 
@@ -127,9 +124,9 @@ is at the edges, not under the racing line, so it is not urgent, but it is the
 
 **Not verified:**
 
-- The HUD has never been driven by real snapshots — only by the preview
-  fly-through. Positions, lap times and the draft flag are untested against the
-  server.
+- The HUD has now been driven by a live server through a full lobby → grid →
+  countdown → racing cycle, but only with **one car**. Race positions and lap
+  times across a real ten-car field are still untested.
 - The render layer has never run with ten cars in the scene. The 8.4 ms frame
   budget was measured with an empty grid; A's cars and physics go on top.
 - Never tested in Safari (§9 warns its WebGL and audio differ).
