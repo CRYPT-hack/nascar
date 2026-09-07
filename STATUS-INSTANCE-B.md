@@ -74,24 +74,20 @@ draws the real environment and HUD; `/preview.html` remains as the harness.
 Verified by playing it: join, roster, ready, FORM UP, countdown, GO, the banner
 clearing itself, and the lap clock running against the live server.
 
-Still open in the same area:
+Still open in the same area, and both are Instance A's:
 
-- `setDrafting()` exists on `Ui` but nothing calls it — the draft indicator will
-  stay dark until slipstream detection lands. That is a physics question, so it
-  is Instance A's to set.
-- The HUD has still never been seen with ten cars and real positions; only one
-  local car plus AI fill.
+- `setDrafting()` exists on `Ui` but nothing calls it, so the draft indicator
+  stays dark. Slipstream detection is a physics question.
+- Nothing sets a spectator camera; `setSpectating()` shows the notice, but the
+  view stays where the local car would be.
 
-### Cross-section constants disagree
+### ~~Cross-section constants disagree~~ — done
 
-`vehicle/track-collision.ts` and `track/src/section.ts` independently define the
-same cross-section and differ: kerb 1.2 m vs 1.1 m, run-off 9 m vs 14 m (mine
-variable per side), barrier 1.3 m vs 1.2 m.
+`track/src/section.ts` now mirrors `vehicle/track-collision.ts` exactly. Verified
+analytically against A's own band table over every waypoint on both circuits:
+worst height difference 0.00000 m, worst barrier offset difference 0.0000 m.
 
-Proposal, unless A objects: **A's numbers win** — they are baked into a
-gate-passing physics build — and `section.ts` changes to match. The discrepancy
-is at the edges, not under the racing line, so it is not urgent, but it is the
-"visibly on asphalt, grass friction" class of bug.
+The physics builder owns those numbers. If they ever change, change both files.
 
 ### Not started, in my scope
 
@@ -121,21 +117,36 @@ is at the edges, not under the racing line, so it is not urgent, but it is the
 - 0 trees or spectators inside the barrier line, checked against the sampler.
 - HUD values, lobby roster and results table read correctly from the DOM.
 - Both circuits load, switch and rebuild scenery without error.
+- A live ten-car grid: positions render correctly through the HUD (P6/10,
+  updating as the field moves), and the frame budget holds at **6.9 ms median,
+  7.7 ms p95** with ten cars, prediction and interpolation — inside 16.67 ms.
 
 **Not verified:**
 
-- The HUD has now been driven by a live server through a full lobby → grid →
-  countdown → racing cycle, but only with **one car**. Race positions and lap
-  times across a real ten-car field are still untested.
-- The render layer has never run with ten cars in the scene. The 8.4 ms frame
-  budget was measured with an empty grid; A's cars and physics go on top.
+- Nobody has driven a full three-lap race to a results screen by hand. The
+  lobby → grid → countdown → racing path is verified; `finished` and the results
+  table have only been seen with placeholder data.
 - Never tested in Safari (§9 warns its WebGL and audio differ).
 - Never tested on a projector, which is what the contrast and fog were tuned for.
 - Frame timings are from this machine only.
 
 ---
 
-## 5. The mistake worth keeping
+## 5. One known cosmetic defect
+
+The barrier line doubles back by about 0.66 m over three waypoints on the inside
+of Bico de Pato. It is in the shared cross-section, not in one half of it: A's
+collision mesh contains the same fold as one inverted triangle out of 4800.
+
+Left alone deliberately. Narrowing the run-off in `section.ts` alone would only
+move the visible barrier away from the real one, and changing
+`vehicle/track-collision.ts` would invalidate gate results for one triangle at a
+corner where ten AI cars already run 0.0–2.3% off-track. `npm run track:build`
+reports it as a note.
+
+---
+
+## 6. The mistake worth keeping
 
 I flipped the generator's banking sign, believing every corner was banked
 off-camber. It was not, and the flip put **eight of ten AI cars off the road**.
