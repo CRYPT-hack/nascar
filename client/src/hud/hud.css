@@ -1,0 +1,315 @@
+/**
+ * HUD and screen styling.
+ *
+ * Sized for a projector at the back of a room (HANDOFF.md §1): large type, hard
+ * contrast against both sky and asphalt, and every panel sits on a dark scrim
+ * so it stays legible when the car crosses from grass onto a bright kerb.
+ *
+ * All numeric readouts use tabular figures. A lap timer whose digits change
+ * width jitters several pixels every frame and draws the eye away from the
+ * track.
+ */
+
+.hud,
+.screen {
+  --ink: #f2f6fa;
+  --dim: #9fb0c0;
+  --accent: #ffd60a;
+  --scrim: rgba(10, 14, 20, 0.66);
+  --edge: rgba(255, 255, 255, 0.1);
+  font-family:
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    Roboto,
+    sans-serif;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+
+/* --- In-race overlay ---------------------------------------------------- */
+
+.hud {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 20;
+  user-select: none;
+}
+
+.hud[hidden] {
+  display: none;
+}
+
+.hud-panel {
+  position: absolute;
+  padding: 10px 16px;
+  border-radius: 12px;
+  background: var(--scrim);
+  border: 1px solid var(--edge);
+  backdrop-filter: blur(8px);
+  line-height: 1.1;
+}
+
+.hud-label {
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--dim);
+  margin-bottom: 3px;
+}
+
+.hud-position {
+  top: 20px;
+  left: 20px;
+}
+.hud-position .value {
+  font-size: 46px;
+  font-weight: 800;
+}
+.hud-position .value .of {
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--dim);
+}
+
+.hud-lap {
+  top: 20px;
+  right: 20px;
+  text-align: right;
+}
+.hud-lap .value {
+  font-size: 40px;
+  font-weight: 800;
+}
+.hud-lap .value .of {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--dim);
+}
+
+.hud-times {
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  text-align: center;
+  min-width: 210px;
+}
+.hud-times .current {
+  font-size: 30px;
+  font-weight: 700;
+}
+.hud-times .rows {
+  display: flex;
+  gap: 18px;
+  justify-content: center;
+  margin-top: 6px;
+  font-size: 13px;
+  color: var(--dim);
+}
+.hud-times .rows b {
+  color: var(--ink);
+  font-weight: 600;
+}
+/* A personal best is worth one clear beat of feedback. */
+.hud-times.is-best .current {
+  color: #b388ff;
+}
+
+.hud-speed {
+  bottom: 22px;
+  right: 22px;
+  text-align: right;
+}
+.hud-speed .value {
+  font-size: 62px;
+  font-weight: 800;
+  line-height: 0.95;
+}
+.hud-speed .unit {
+  font-size: 15px;
+  color: var(--dim);
+  letter-spacing: 0.1em;
+}
+
+.hud-draft {
+  position: absolute;
+  bottom: 30px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 8px 20px;
+  border-radius: 999px;
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 0.2em;
+  background: rgba(10, 132, 255, 0.2);
+  border: 1px solid #0a84ff;
+  color: #9fd0ff;
+  opacity: 0;
+  transition: opacity 120ms ease-out;
+}
+.hud-draft.on {
+  opacity: 1;
+}
+
+/* Centre banner: countdown, "GO", and phase messages. */
+.hud-banner {
+  position: absolute;
+  top: 42%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 92px;
+  font-weight: 900;
+  letter-spacing: 0.02em;
+  text-shadow: 0 6px 30px rgba(0, 0, 0, 0.6);
+  opacity: 0;
+  transition: opacity 140ms ease-out;
+}
+.hud-banner.on {
+  opacity: 1;
+}
+.hud-banner.go {
+  color: #30d158;
+}
+
+/* --- Lobby and results -------------------------------------------------- */
+
+.screen {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  background: rgba(8, 11, 16, 0.82);
+  backdrop-filter: blur(10px);
+}
+
+.screen[hidden] {
+  display: none;
+}
+
+.screen .card {
+  width: min(760px, 92vw);
+  max-height: 88vh;
+  overflow: auto;
+  padding: 30px 34px;
+  border-radius: 18px;
+  background: #12171f;
+  border: 1px solid var(--edge);
+  box-shadow: 0 30px 90px rgba(0, 0, 0, 0.55);
+}
+
+.screen h1 {
+  margin: 0 0 4px;
+  font-size: 30px;
+  letter-spacing: -0.01em;
+}
+
+.screen .sub {
+  margin: 0 0 22px;
+  color: var(--dim);
+  font-size: 14px;
+}
+
+.screen table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 15px;
+}
+
+.screen th {
+  text-align: left;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--dim);
+  font-weight: 600;
+  padding: 0 10px 8px;
+  border-bottom: 1px solid var(--edge);
+}
+
+.screen td {
+  padding: 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.screen td.num,
+.screen th.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.screen tr.me td {
+  background: rgba(255, 214, 10, 0.08);
+}
+
+.swatch {
+  display: inline-block;
+  width: 13px;
+  height: 13px;
+  border-radius: 4px;
+  margin-right: 9px;
+  vertical-align: -1px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+}
+
+.pill {
+  display: inline-block;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.pill.ready {
+  background: rgba(48, 209, 88, 0.16);
+  color: #56d97a;
+}
+.pill.waiting {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--dim);
+}
+.pill.ai {
+  background: rgba(191, 90, 242, 0.16);
+  color: #cf9bf5;
+}
+
+/* A pill sitting after a driver's name rather than alone in its own column. */
+.pill.inline {
+  margin-left: 8px;
+}
+
+.screen .actions {
+  margin-top: 24px;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.screen button {
+  font: inherit;
+  font-weight: 700;
+  padding: 12px 26px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  background: var(--accent);
+  color: #14181d;
+  cursor: pointer;
+}
+
+.screen button.ghost {
+  background: transparent;
+  border-color: var(--edge);
+  color: var(--ink);
+}
+
+.screen button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.screen .hint {
+  color: var(--dim);
+  font-size: 13px;
+}
