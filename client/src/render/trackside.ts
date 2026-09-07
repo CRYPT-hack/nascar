@@ -19,6 +19,7 @@ import type { TrackData } from '../../../shared/track-schema';
 import { buildFrames, type Frame } from '../../../track/src/mesh';
 import { outerHalfWidth, type SectionPlan } from '../../../track/src/section';
 import { curvature, smoothClosed, type P2 } from '../../../track/src/spline';
+import { createScenery } from './scenery';
 
 /** Straight enough to seat spectators along: radius over 400 m. */
 const STRAIGHT_CURVATURE = 1 / 400;
@@ -28,9 +29,33 @@ const MIN_STAND_LENGTH = 140;
 const MAX_STANDS = 3;
 /** Gap between the barrier and the front of a stand, metres. */
 const STAND_SETBACK = 5;
-const STAND_SEGMENT = 12;
-const STAND_DEPTH = 14;
-const STAND_HEIGHT = 9;
+export const STAND_SEGMENT = 12;
+export const STAND_DEPTH = 14;
+/** Height of the solid substructure. Seating sits on top of this, not inside it. */
+export const STAND_HEIGHT = 9;
+/** Height of the seating deck above the substructure, metres. */
+export const SEAT_DECK_RISE = 0.4;
+/** Height of the roof above the substructure, metres. */
+export const ROOF_RISE = 5.2;
+
+/**
+ * One grandstand segment, in world space.
+ *
+ * Exposed because the crowd has to sit on the decks. Computing the seating
+ * positions from the same placements the shells were built from is the only way
+ * the spectators end up on the stands rather than beside them.
+ */
+export interface StandPlacement {
+  /** Centre of the segment, at ground level. */
+  base: THREE.Vector3;
+  /** Unit vector along the track. */
+  forward: THREE.Vector3;
+  /** Unit vector to the right of the direction of travel. */
+  right: THREE.Vector3;
+  /** Which side of the track this stand is on. */
+  side: -1 | 1;
+  heading: number;
+}
 
 const GANTRY_CLEARANCE = 7;
 
@@ -81,52 +106,35 @@ function findStraights(track: TrackData): Array<{ start: number; count: number; 
 }
 
 /**
- * Grandstands along the longest straights.
- *
- * Placed on whichever side has more run-off, so a stand never ends up crammed
- * against a barrier on the inside of a corner entry.
+ * Where the grandstands go: along the longest straights, on whichever side has
+ * more run-off so one never ends up crammed against a barrier at a corner entry.
  */
-function createGrandstands(track: TrackData, frames: Frame[], plan: SectionPlan): THREE.Object3D | null {
-  const placements: THREE.Matrix4[] = [];
-  const seatPlacements: THREE.Matrix4[] = [];
+function planGrandstands(track: TrackData, frames: Frame[], plan: SectionPlan): StandPlacement[] {
+  const out: StandPlacement[] = [];
 
   for (const run of findStraights(track)) {
-    // Seat the stand on whichever side has more run-off, so it never ends up
-    // crammed against a barrier on the inside of a corner entry.
     const midIdx = (run.start + Math.floor(run.count / 2)) % frames.length;
     const side: -1 | 1 = plan.leftWidth[midIdx]! > plan.rightWidth[midIdx]! ? -1 : 1;
 
     const stepIdx = Math.max(1, Math.round(STAND_SEGMENT / (run.metres / run.count)));
     for (let i = run.start; i < run.start + run.count; i += stepIdx) {
-      const f = frames[i % frames.length]!;
-      const runoff = side < 0 ? plan.leftWidth[i % frames.length]! : plan.rightWidth[i % frames.length]!;
+      const idx = i % frames.length;
+      const f = frames[idx]!;
+      const runoff = side < 0 ? plan.leftWidth[idx]! : plan.rightWidth[idx]!;
       const d = side * (outerHalfWidth(f.width, runoff) + STAND_SETBACK + STAND_DEPTH / 2);
-      const base = offset(f, d);
 
-      const m = new THREE.Matrix4();
-      m.compose(
-        new THREE.Vector3(base.x, base.y + STAND_HEIGHT / 2, base.z),
-        new THREE.Quaternion().setFromEuler(new THREE.Euler(0, -headingOf(f), 0)),
-        new THREE.Vector3(STAND_DEPTH, STAND_HEIGHT, STAND_SEGMENT),
-      );
-      placements.push(m);
+      const right = new THREE.Vector3(f.right[0], f.right[1], f.right[2]);
+      const up = new THREE.Vector3(f.up[0], f.up[1], f.up[2]);
+      // right = forward x up, so forward = up x right.
+      const forward = new THREE.Vector3().crossVectors(up, right).normalize();
 
-      // Seating deck: a thinner slab tilted toward the track, so the stand does
-      // not read as a plain wall from the car.
-      const seat = new THREE.Matrix4();
-      seat.compose(
-        new THREE.Vector3(
-          base.x - f.right[0] * side * (STAND_DEPTH * 0.28),
-          base.y + STAND_HEIGHT * 0.78,
-          base.z - f.right[2] * side * (STAND_DEPTH * 0.28),
-        ),
-        new THREE.Quaternion().setFromEuler(new THREE.Euler(0, -headingOf(f), side * 0.42)),
-        new THREE.Vector3(STAND_DEPTH * 0.75, 0.7, STAND_SEGMENT * 0.96),
-      );
-      seatPlacements.push(seat);
+      out.push({ base: offset(f, d), forward, right, side, heading: headingOf(f) });
     }
   }
+  return out;
+}
 
+function buildGrandstands(placements: StandPlacement[]): THREE.Object3D | null {
   if (placements.length === 0) return null;
 
   const group = new THREE.Group();
@@ -141,15 +149,59 @@ function createGrandstands(track: TrackData, frames: Frame[], plan: SectionPlan)
   const seats = new THREE.InstancedMesh(
     box,
     new THREE.MeshStandardMaterial({ color: 0x2f4f76, roughness: 0.85 }),
-    seatPlacements.length,
+    placements.length,
   );
-  placements.forEach((m, i) => shell.setMatrixAt(i, m));
-  seatPlacements.forEach((m, i) => seats.setMatrixAt(i, m));
+  // A roof is what separates a grandstand from a grey box at a glance.
+  const roof = new THREE.InstancedMesh(
+    box,
+    new THREE.MeshStandardMaterial({ color: 0xd7dbe0, roughness: 0.7, metalness: 0.15 }),
+    placements.length,
+  );
+
+  const m = new THREE.Matrix4();
+  placements.forEach((s, i) => {
+    m.compose(
+      new THREE.Vector3(s.base.x, s.base.y + STAND_HEIGHT / 2, s.base.z),
+      new THREE.Quaternion().setFromEuler(new THREE.Euler(0, -s.heading, 0)),
+      new THREE.Vector3(STAND_DEPTH, STAND_HEIGHT, STAND_SEGMENT),
+    );
+    shell.setMatrixAt(i, m);
+
+    // Seating deck, raked toward the track. It sits *on top* of the shell:
+    // the shell is the substructure, and anything placed inside its height is
+    // simply invisible — which is where the deck and the whole crowd used to be.
+    m.compose(
+      new THREE.Vector3(
+        s.base.x - s.right.x * s.side * (STAND_DEPTH * 0.28),
+        s.base.y + STAND_HEIGHT + SEAT_DECK_RISE,
+        s.base.z - s.right.z * s.side * (STAND_DEPTH * 0.28),
+      ),
+      new THREE.Quaternion().setFromEuler(new THREE.Euler(0, -s.heading, s.side * 0.42)),
+      new THREE.Vector3(STAND_DEPTH * 0.8, 0.7, STAND_SEGMENT * 0.96),
+    );
+    seats.setMatrixAt(i, m);
+
+    // Cantilevered out over the seating, toward the track, and high enough to
+    // clear the back row rather than sitting on their heads.
+    m.compose(
+      new THREE.Vector3(
+        s.base.x - s.right.x * s.side * (STAND_DEPTH * 0.18),
+        s.base.y + STAND_HEIGHT + ROOF_RISE,
+        s.base.z - s.right.z * s.side * (STAND_DEPTH * 0.18),
+      ),
+      new THREE.Quaternion().setFromEuler(new THREE.Euler(0, -s.heading, s.side * 0.12)),
+      new THREE.Vector3(STAND_DEPTH * 1.05, 0.45, STAND_SEGMENT),
+    );
+    roof.setMatrixAt(i, m);
+  });
+
   shell.instanceMatrix.needsUpdate = true;
   seats.instanceMatrix.needsUpdate = true;
+  roof.instanceMatrix.needsUpdate = true;
   shell.castShadow = true;
   seats.castShadow = true;
-  group.add(shell, seats);
+  roof.castShadow = true;
+  group.add(shell, seats, roof);
   return group;
 }
 
@@ -248,10 +300,23 @@ export function createTrackside(track: TrackData, plan: SectionPlan): THREE.Grou
   group.name = 'trackside';
 
   group.add(createGantry(frames, plan));
-  const stands = createGrandstands(track, frames, plan);
+
+  const standPlacements = planGrandstands(track, frames, plan);
+  const stands = buildGrandstands(standPlacements);
   if (stands) group.add(stands);
+
   const posts = createMarshalPosts(track, frames, plan);
   if (posts) group.add(posts);
+
+  // Trees, spectators and tyre stacks. Given the stand placements so the crowd
+  // sits on the decks rather than beside them.
+  group.add(
+    createScenery(track, plan, frames, standPlacements, {
+      standLength: STAND_SEGMENT,
+      standDepth: STAND_DEPTH,
+      standHeight: STAND_HEIGHT,
+    }),
+  );
 
   return group;
 }

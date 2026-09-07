@@ -31,8 +31,15 @@ import { createGridMarkers, createGroundPlane, createTrackView, type TrackView }
 /** Metres per second for the lap fly-through. 55 m/s is about 200 km/h. */
 const LAP_SPEED = 55;
 /** How far ahead the lap camera looks. Too short and every corner is a surprise. */
-const LOOK_AHEAD = 28;
-const EYE_HEIGHT = 1.15;
+const LOOK_AHEAD = 32;
+/**
+ * Roughly where a chase camera sits, rather than at a driver's eye. A level
+ * camera at eye height fills half the frame with empty sky, which judges the
+ * scenery unfairly — the game will be looked at slightly downward, over a car.
+ */
+const EYE_HEIGHT = 2.6;
+/** How far below the aim point the camera looks, metres. Tilts the view down. */
+const LOOK_DROP = 1.4;
 
 const info = document.getElementById('info') as HTMLDivElement;
 
@@ -181,7 +188,7 @@ function frame(): void {
     const here = sampler.poseAt(lapDistance);
     const ahead = sampler.poseAt(lapDistance + LOOK_AHEAD);
     rig.camera.position.set(here.p[0], here.p[1] + EYE_HEIGHT, here.p[2]);
-    rig.camera.lookAt(ahead.p[0], ahead.p[1] + EYE_HEIGHT * 0.8, ahead.p[2]);
+    rig.camera.lookAt(ahead.p[0], ahead.p[1] + EYE_HEIGHT - LOOK_DROP, ahead.p[2]);
     rig.followShadow(new THREE.Vector3(here.p[0], here.p[1], here.p[2]));
 
     // Feed the HUD from the fly-through, so the overlay is checked against a
