@@ -18,7 +18,7 @@
 
 import * as THREE from 'three';
 
-import { CAR } from '../shared/constants';
+import { CAR, CAR_COLORS } from '../shared/constants';
 import { buildCarModel, WHEEL_REST_Y } from '../client/src/render/car-mesh';
 
 let checks = 0;
@@ -73,7 +73,7 @@ const GROUND = WHEEL_REST_Y - CAR.wheelRadius;
 
 console.log('the car is built to the size of the car that collides');
 {
-  const model = buildCarModel(0xff3b30);
+  const model = buildCarModel(0);
   const b = bounds(model.body);
 
   check(
@@ -101,7 +101,7 @@ console.log('the car is built to the size of the car that collides');
 
 console.log('\nevery face is wound outward');
 {
-  const model = buildCarModel(0x0a84ff);
+  const model = buildCarModel(1);
   const v = signedVolume6(model.body) / 6;
   check('the body has positive signed volume', v > 0, `${v.toFixed(3)} m^3`);
   // A 4.5 x 1.9 x 1.3 car is a couple of cubic metres of shell; a wildly
@@ -114,7 +114,7 @@ console.log('\nevery face is wound outward');
 
 console.log('\nthe wheels sit where the physics puts them');
 {
-  const model = buildCarModel(0x30d158);
+  const model = buildCarModel(3);
   check('four of them', model.wheels.length === 4);
   check(
     'the front pair steers, and comes first',
@@ -128,24 +128,37 @@ console.log('\nthe wheels sit where the physics puts them');
   }
   near('and the hub is at the rest height', model.wheels[0]!.position.y, WHEEL_REST_Y, 1e-6);
 
+  // The tread is an 18-sided prism inscribed in the circle, so its silhouette
+  // runs between R at a vertex and R * cos(pi/18) across a flat - about 5 mm
+  // shallower. Inscribed rather than circumscribed on purpose: the tyre then
+  // never reads wider than the physics radius, and 5 mm of ride height at the
+  // flat is not visible. Asserting an exact R here would be asserting something
+  // no polygon can do.
+  const flat = CAR.wheelRadius * Math.cos(Math.PI / 18);
   const wb = bounds(model.wheels[0]!.geometry);
-  near('the tyre has the physics radius', (wb.max.y - wb.min.y) / 2, CAR.wheelRadius, 1e-3);
-  near(
-    'and its contact patch is on the ground',
-    model.wheels[0]!.position.y + wb.min.y,
-    GROUND,
-    1e-3,
+  const r = (wb.max.y - wb.min.y) / 2;
+  check(
+    'the tyre carries the physics radius',
+    r <= CAR.wheelRadius + 1e-4 && r >= flat - 1e-4,
+    `${r.toFixed(4)} outside ${flat.toFixed(4)}..${CAR.wheelRadius.toFixed(4)}`,
+  );
+  const patch = model.wheels[0]!.position.y + wb.min.y;
+  check(
+    'and its contact patch sits on the ground',
+    patch >= GROUND - 1e-4 && patch <= GROUND + (CAR.wheelRadius - flat) + 1e-4,
+    `${patch.toFixed(4)} against ground ${GROUND.toFixed(4)}`,
   );
 }
 
 console.log('\nevery livery is built and coloured');
 {
-  for (const hex of [0xff3b30, 0xf2f2f7, 0x1c1c1e]) {
-    const model = buildCarModel(hex);
+  // Every colour, so a livery that only breaks on car 7 cannot hide.
+  for (let i = 0; i < CAR_COLORS.length; i++) {
+    const model = buildCarModel(i);
     const c = model.body.getAttribute('color');
-    check(`#${hex.toString(16).padStart(6, '0')} has a colour per vertex`, c?.count > 0);
+    check(`car ${i + 1} has a colour per vertex`, c?.count > 0);
     let lit = 0;
-    for (let i = 0; i < c.count; i++) if (c.getX(i) + c.getY(i) + c.getZ(i) > 0.02) lit++;
+    for (let v = 0; v < c.count; v++) if (c.getX(v) + c.getY(v) + c.getZ(v) > 0.02) lit++;
     // Black bodywork is a valid choice; wholly black geometry is the no-normals
     // failure wearing a disguise, so require most of it to carry some colour.
     check('  and most of it is not black', lit > c.count * 0.5, `${lit} of ${c.count}`);

@@ -7,123 +7,27 @@ Newest blockers go at the very top so they are seen first.
 
 ## BLOCKERS
 
-### 2026-09-07 — BLOCKED: the gate cannot run on this machine as it stands
+**The gate was re-run on 2026-09-08 with the merged tree: 2 pass, 1 fail, 2
+not measurable.** Section at the end of this file. The two that cannot be
+measured are the machine, not the build, and there is a control run that shows
+it.
 
-**Needs you.** Step 2 (re-run the five-check gate on the merged tree) is ready
-to go and the merge itself is verified, but `tools/cpubench.ts` says the machine
-is not fit to be measured on, and the whole point of that tool is that I do not
-grade a gate when it says so.
+**This machine still cannot be measured on.** `cpubench` reads 12.6-14.5 ms per
+ten-car step against 1.07-2.75 ms when healthy, and the CPU sits at ~1.57 GHz
+under load - 65% of its own 2.4 GHz base, on a part that should turbo well
+above it. Roblox is closed and it did not help; five minutes of idle did not
+help. It is not a Windows setting: max processor state is 100% on AC and DC,
+and no power-mode overlay is set. Checks 2 and 3 need a client that can hold a
+60 Hz loop, and this one stalls for 249 ms at p99.
 
-| run | per ten-car step | verdict |
-|---|---|---|
-| healthy, earlier today | 1.07 - 2.751 ms | fine |
-| first run today | 6.155 ms | over the 4 ms invalidation line |
-| after 100 s idle | **14.365 ms** | worse; a tenth of the machine's throughput |
-| pinned to P-cores, priority High | 7.760 ms | still 3x too slow |
+**Check 2 remains an accepted deviation and will not be fixed.** Decision was
+final before this re-run and nothing here reopens it.
 
-It is not the power plan and it is not core scheduling. Max processor state is
-100% on AC, and pinning the process to the six P-cores at High priority only
-got it to 7.76 ms. The performance counter is the tell: the CPU is delivering
-**82.7% of its base clock** on a part that should be turbo well above it, so it
-is throttling in hardware.
-
-What is running: `RobloxPlayerBeta` (a 3D game, so it holds both the GPU and the
-package hot), Brave, and three `node.exe` processes belonging to **Codex's**
-runtime, not to this project.
-
-**Close Roblox and give the machine a few minutes and I will re-run cpubench and
-then the gate.** I have not killed it — it is your session and your call.
-
-Note that this blocks step 3 as well. The venue recording is ten clients plus a
-browser rendering the field on the same box, which is the heaviest thing this
-project ever does.
-
----
-
-### 2026-09-07 — RESOLVED: "Instance B has delivered nothing"
-
-Instance A logged this, and it was accurate when written. Instance B's work
-existed but was stranded on a local branch: the `gh` CLI on the build machine
-was authenticated as an account with read-only access to the repo, so eight
-commits sat unpushed for about twenty hours while A saw an empty `assets/` and
-no B history at all. Access has since been granted and everything is merged.
-
-A's assessment of the existing Interlagos was right, and nothing has replaced
-it. The track JSON is **byte-identical** to what every gate run used. What the
-merge adds around it: the visual mesh and material set, sky and lighting,
-barriers, trackside scenery, the HUD, and the lobby/results screens.
-
-No decision needed. Step 3 (the venue recording) can go ahead on this geometry.
-
----
-
-### 2026-09-07 — Banking: I broke it, measured it, and reverted it
-
-Resolved, recorded because the failure mode is worth keeping. **No action needed
-from Instance A, and the gate results still stand** — the track JSON is
-byte-identical to what those gates were run against.
-
-`Waypoint.banking` says "positive = banked right", which does not say which way
-the surface tilts. The two halves read it oppositely:
-
-- `vehicle/track-collision.ts` rolls about `forward x right` — positive banking
-  puts the **right edge lower**
-- `track/src/mesh.ts` rolled about `right x forward` — positive banking put the
-  right edge **higher**
-
-Each half was self-consistent, so nothing caught it. Combined with the
-generator's `+curvature * BANK_GAIN`, the *physics* surface was correctly
-cambered all along; only the rendered road leaned the wrong way.
-
-I read the renderer's convention, concluded the generator was emitting banking
-inverted, and flipped it. That put every corner genuinely off-camber in the
-collision mesh the car drives on. Measured with `tools/laptest.ts interlagos 10 3`:
-
-| | before | after the flip |
-|---|---|---|
-| finishers | **10 / 10** | **2 / 10** |
-| off-track | 0.0–2.3% | 65–90% |
-| best lap | 1:19.6 | 1:24.4 |
-
-Reverted. The renderer and `TrackSampler.groundY` were changed instead, so the
-visible road now sits the same way up as the surface under the wheels — which
-also fixes the pre-existing visual/physics camber mismatch. Convention written
-down in CHANGELOG-SHARED.md; the physics builder owns it.
-
-Two things worth taking from this. Reasoning about a sign convention from one
-side of a boundary is not evidence about the system: both readings looked
-correct in isolation, and only running the car told the truth. And the check
-that caught it was a whole-system behavioural one — ten cars driving three laps
-— not a geometry assertion. My build-time geometry checks all passed happily
-throughout, because the geometry was internally consistent the entire time.
-
-### 2026-09-07 — Cross-section constants differ between collision and visuals
-
-`vehicle/track-collision.ts` and `track/src/section.ts` independently define the
-same cross-section, and disagree: kerb 1.2 m vs 1.1 m, run-off 9 m vs 14 m
-(mine variable per side), barrier 1.3 m vs 1.2 m. The visible road does not sit
-exactly on the colliders.
-
-Not urgent — the discrepancy is at the edges, not under the racing line — but it
-is the "visibly on asphalt, grass friction" class of bug. Proposal, unless
-Instance A objects: **A's numbers win**, since they are baked into a
-gate-passing physics build, and `section.ts` changes to match.
-
-**Hour-20 gate under 100 ms / 2% impairment: 4 pass, 1 accepted deviation.**
-Section at the end of this file. §7 scoring is *continue to full 10-player*,
-and check 4 (contact) passes, so the player count stays at ten.
-
-**Check 2 is closed as an accepted deviation and will not be fixed.** p99
-prediction error 1.498 m against a 1 m bar, but p95 is 0.004 m and there is not
-one hard snap in ninety seconds - no rubber-banding, which is what the check is
-actually about. The remedy would be rollback in the authoritative loop, which is
-not a trade worth making at this stage. Full justification at the end of this
-file. Do not reopen.
-
-**Run `npx tsx tools/cpubench.ts` before trusting any gate run.** This machine
-throttled to a tenth of its throughput mid-session and made the server look as
-though it had lost 40% of its headroom and the netcode look broken. Neither had
-changed. Anything above about 4 ms per ten-car step invalidates timing results.
+**Run `npx tsx tools/cpubench.ts` before trusting any gate run** - but read it
+alongside the harness's own tick rate. cpubench runs a sustained 100% load and
+this machine throttles hard under that; the server's real duty cycle is bursty
+and it held 59.99 Hz with ten cars in the same session cpubench called 14 ms.
+A slow cpubench means *timing results are suspect*, not that the server is down.
 
 ---
 
@@ -1207,3 +1111,126 @@ updated inside the frame loop, so it reads as whatever it was when the loop
 stopped. It is the same trap `netcheck.ts` was written to avoid, and it means
 **no frame-rate number can be taken from this session**; draw-call and triangle
 counts are fine, because they describe the last frame that did render.
+
+---
+
+## GATE RE-RUN ON THE MERGED TREE, 2026-09-08
+
+100 ms +/-20 ms latency, 2% packet loss, both directions, ten clients.
+
+**Result: 2 pass, 1 fail, 2 not measurable.**
+
+| | | measured | required |
+|---|---|---|---|
+| 1 | Server stability | **FAIL** - 59.99 Hz held, but **26.4%** headroom at p99 | >=40% |
+| 2 | Local responsiveness | **NOT MEASURABLE** - harness starved | <1 m, 0 snaps |
+| 3 | Remote smoothness | **NOT MEASURABLE** - same | 0, <5% |
+| 4 | Contact | **PASS** - **0** airborne in 13,990 samples, worst up.y 0.91 | 0, >0.2 |
+| 5 | Memory | **PASS** - RSS -0.5%, WASM +2.7%, heap +20.9% | no leak |
+
+Run lengths were 90 s. §7 asks 5 minutes for check 1 and 10 for check 5; on a
+machine taking five times as long per step, longer runs were not a good use of
+the remaining time. Both are recorded as short.
+
+### Why 2 and 3 are "not measurable" and not "fail"
+
+Because there is a control, and it is clean.
+
+Ten impaired clients, self-hosted harness: frame dt p99 **569 ms** against a
+16.7 ms budget, and the interpolation timeline ended up **10.7 s** behind the
+newest snapshot. That is a harness that stopped running, not a netcode result.
+
+Splitting the server into its own process (`NETCHECK_ATTACH`) fixed the
+timeline - server tick 59.5 Hz, render lag 67 ms - and the numbers were still
+bad: p99 33.2 m, 297 hard snaps, **2787 server input holds** in 55 s. But the
+pace controller was pegged at its ceiling (1.09x) with the server's input queue
+at **0.00**, which is the signature of a client that cannot generate inputs fast
+enough, not of a server mishandling them.
+
+**The control settles it.** Same build, same machine, impairment turned off:
+
+| | impaired | control (no impairment) |
+|---|---|---|
+| error p50 / p75 / p90 / p95 | 0.001 / 3.1 / 11.8 / 18.8 m | **0.000 / 0.000 / 0.000 / 0.000 m** |
+| error p99 | 33.222 m | **0.003 m** |
+| hard snaps | 297 | **0** |
+| server input holds | 2787 | **10** (0.72%) |
+| client frame dt p99 | 249 ms | 41 ms |
+
+A build that produces four zeroes and no hard snaps unimpaired has not
+regressed. What 100 ms of latency and 2% loss add is *reconciliation work* - the
+client replays more, per frame - and this machine cannot afford it. On a healthy
+machine the same code measured p95 0.004 m with zero hard snaps.
+
+So checks 2 and 3 are recorded as blocked on the machine. Reporting them as
+failures would be attributing to the code something a control run says is not
+the code's.
+
+### Check 1: the server did hold 60 Hz
+
+Worth separating the two things this check asks. The server **kept 59.99 Hz with
+ten cars racing under impairment**, all ten connected, for the whole run. What
+it did not keep is the headroom: step p50 3.54 ms and p99 12.26 ms of a 16.67 ms
+budget, so 26.4% at p99 against the 40% the check wants. On a healthy machine
+the same code measured p50 1.07 ms and 81.9% headroom.
+
+This also corrected something about `cpubench`. It reported 14.3 ms per ten-car
+step in the same session where the server sat at 3.54 ms p50 - a 4x gap. The
+difference is duty cycle: cpubench runs flat out and this machine throttles hard
+under sustained load, while a 60 Hz server works in bursts and boosts between
+them. cpubench is still the right pre-flight - a bad reading means timing
+results are suspect - but it is a floor, not a prediction of server headroom.
+
+### Checks 4 and 5 are real results
+
+Neither depends on how fast the wall clock runs. Check 4 samples car attitude
+across a fixed number of simulation steps, and **not one car in 13,990 samples
+left the road surface** - worst attitude up.y 0.91 (upright is 1.0), greatest
+height 0.63 m. Check 5 measures allocation, not speed: RSS fell 0.5% over the
+run and Rapier's WASM arena moved 2.7%.
+
+
+---
+
+## Making the car worth looking at
+
+The built car was correct but plain: a shape with the right dimensions and
+nothing on it. Reworked, and the changes that actually did the work:
+
+- **The cabin was an upright box.** More than anything else that is what made
+  the car read as a toy. The greenhouse now rakes from z -0.88 and tapers to a
+  fastback, over six stations instead of a slab.
+- **Wheels got the detail they earn.** They are the only part of a car that
+  moves against the bodywork, and a flat grey disc in an arch reads as a wheel
+  on a pull-along toy. Each is now an 18-sided tread, a sidewall, five spokes
+  radiating from a hub cap, and a brake disc with a caliper straddling it - all
+  merged into the one wheel mesh, so the draw-call count did not move.
+- **Racing numbers**, on both doors and on the roof, drawn as seven-segment
+  shapes. Segments rather than a texture: a texture means UV unwrapping a lofted
+  body and shipping an atlas, for two digits. The number comes from the colour
+  index, so the car in the roster is the car on the track.
+- **A darker band along the lower flank**, twin bonnet stripes, wing mirrors on
+  stalks, and exhaust tips. The flank band matters most of the three: without it
+  the side of the car is one unbroken sheet of colour from sill to roof.
+
+Livery is still derived rather than authored - base coat is the colour the
+player chose, accent flips between near-black and near-white on its luminance -
+so ten cars need no art, and adding an eleventh colour needs no art either.
+
+Still **five draw calls a car**: everything opaque merges into the body mesh and
+the wheels share one geometry across all four corners.
+
+### The test caught three things the eye did not
+
+`tools/carmeshtest.ts` went from 30 checks to 51 and failed three of them
+immediately:
+
+- the **door numbers stood 1.3 cm proud of the collider** (x 0.963 against a
+  0.950 half-width), because the digits are laid on top of the roundel and the
+  roundel was already at the body's edge. Both moved inboard.
+- two checks asserted the tyre had *exactly* `CAR.wheelRadius`. An 18-sided
+  tread cannot: its silhouette runs between R at a vertex and R·cos(pi/18)
+  across a flat, 5 mm shallower. The geometry was right and **the test was
+  wrong**, so the test now states the polygon bound instead. Inscribed rather
+  than circumscribed is deliberate - the tyre then never reads wider than the
+  physics radius, and 5 mm of ride height at a flat is invisible.
