@@ -31,7 +31,10 @@ export class Ui {
   private readonly nameInput: HTMLInputElement;
 
   private chosenColor = Math.floor(Math.random() * CAR_COLORS.length);
-  private isReady = false;
+  /** What the player asked for, and what the server has confirmed. */
+  private readyIntent = false;
+  private readyConfirmed: boolean | null = null;
+  private readyBtn: HTMLButtonElement | null = null;
   private spectating = false;
   /**
    * Local deadline for the phase timer.
@@ -110,15 +113,15 @@ export class Ui {
   }
 
   showRoster(players: PlayerInfo[], myId: number): void {
-    // The button follows the server's view of us, never a local flag.
+    // The button reports the server's view, never a local flag on its own.
     //
     // On the way back to the lobby the server broadcasts the roster (with every
     // ready flag cleared) before it broadcasts the state change, so a button
-    // rendered from a local `isReady` was rebuilt while that flag was still
-    // true and then never re-rendered. It read "Ready - click to cancel" beside
-    // a roster line reading "waiting", and the next race never started because
-    // everyone believed they had already readied up.
-    this.isReady = players.find((p) => p.id === myId)?.ready ?? false;
+    // rendered from a local flag was rebuilt while that flag was still true and
+    // then never re-rendered. It read "Ready - click to cancel" beside a roster
+    // line reading "waiting", and the next race never started because everyone
+    // believed they had already readied up.
+    this.readyConfirmed = players.find((p) => p.id === myId)?.ready ?? false;
 
     this.roster.replaceChildren();
     const head = el('div', 'roster-head');
@@ -137,16 +140,16 @@ export class Ui {
       this.roster.appendChild(row);
     }
 
-    const label = (r: boolean) => (r ? 'Ready — click to cancel' : 'Ready');
     const btn = document.createElement('button');
     btn.className = 'ready';
-    btn.textContent = label(this.isReady);
     btn.addEventListener('click', () => {
-      this.isReady = !this.isReady;
-      this.onReady?.(this.isReady);
-      btn.textContent = label(this.isReady);
+      this.readyIntent = !this.readyIntent;
+      this.onReady?.(this.readyIntent);
+      this.paintReady();
     });
+    this.readyBtn = btn;
     this.roster.appendChild(btn);
+    this.paintReady();
   }
 
   setState(state: RaceState, timer: number | null): void {
@@ -163,6 +166,9 @@ export class Ui {
         this.banner.style.display = timer === null ? 'none' : 'block';
         this.results.style.display = 'none';
         this.spectating = false;
+        this.readyIntent = false;
+        this.readyConfirmed = false;
+        this.paintReady();
         break;
       case 'grid':
         this.spectating = false;
@@ -182,6 +188,32 @@ export class Ui {
       case 'finished':
         this.banner.style.display = 'none';
         break;
+    }
+  }
+
+  /**
+   * Show what the player asked for and whether the server has agreed yet.
+   *
+   * The middle state matters: a `ready` can be lost, and the client keeps
+   * re-sending until the roster confirms it. Saying so is the difference
+   * between a visible half-second of "confirming" and a player who thinks they
+   * are in the race when the server has never heard of them.
+   */
+  setReadyState(intent: boolean, confirmed: boolean | null): void {
+    this.readyIntent = intent;
+    this.readyConfirmed = confirmed;
+    this.paintReady();
+  }
+
+  private paintReady(): void {
+    const btn = this.readyBtn;
+    if (!btn) return;
+    const pending = this.readyConfirmed !== this.readyIntent;
+    btn.classList.toggle('pending', pending);
+    if (pending) {
+      btn.textContent = this.readyIntent ? 'Ready — confirming…' : 'Cancelling…';
+    } else {
+      btn.textContent = this.readyIntent ? 'Ready — click to cancel' : 'Ready';
     }
   }
 

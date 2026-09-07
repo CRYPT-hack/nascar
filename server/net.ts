@@ -230,6 +230,13 @@ export class GameServer {
       case 'input':
         this.room.onInput(id, msg);
         break;
+      case 'inputs':
+        // Oldest first, so a recovered input is applied before the newer ones
+        // that would otherwise make the server ignore it.
+        if (Array.isArray(msg.a)) {
+          for (const one of msg.a) this.room.onInput(id, { t: 'input', ...one });
+        }
+        break;
       case 'ready':
         this.room.onReady(id, msg.ready === true);
         break;

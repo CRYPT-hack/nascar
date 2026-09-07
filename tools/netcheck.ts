@@ -183,11 +183,18 @@ class SimClient {
     switch (msg.t) {
       case 'welcome':
         this.id = msg.id;
-        this.send({ t: 'ready', ready: true });
+        this.startReadyRetry();
         break;
       case 'state':
         this.state = msg.state;
         if (msg.state === 'grid') this.spawned = false;
+        break;
+      case 'join':
+      case 'leave':
+      case 'roster':
+        // The roster is the acknowledgement for `ready`. See READY_RETRY_MS in
+        // client/src/main.ts - the same handshake, so the gate exercises it.
+        if (msg.players.some((pl) => pl.id === this.id && pl.ready)) this.stopReadyRetry();
         break;
       case 'pong':
         this.prediction.setRtt(Date.now() - msg.ts);
@@ -231,7 +238,7 @@ class SimClient {
     }
   }
 
-  private readonly recent: InputMsg[] = [];
+  private readonly recent: Omit<InputMsg, 't'>[] = [];
 
   /** One fixed physics step, plus input transmission on the send boundary. */
   fixedStep(): void {
@@ -244,12 +251,11 @@ class SimClient {
             : this.driver.update(this.prediction.car, FIXED_DT * 2, this.others);
 
       if (seq % 15 === 0) this.send({ t: 'ping', ts: Date.now() });
-      const msg: InputMsg = { t: 'input', seq, ...input };
-      this.recent.push(msg);
+      this.recent.push({ seq, ...input });
       if (this.recent.length > INPUT_REDUNDANCY) this.recent.shift();
-      // Oldest first: the server keeps only seqs above the highest it has seen,
-      // so a recovered input must arrive before the newer ones that follow it.
-      for (const m of this.recent) this.send(m);
+      // One packet, oldest first: the server keeps only seqs above the highest
+      // it has seen, so a recovered input must arrive before the newer ones.
+      this.send({ t: 'inputs', a: [...this.recent] });
 
       return input;
     });
@@ -274,7 +280,20 @@ class SimClient {
     }
   }
 
+  private readyTimer: NodeJS.Timeout | null = null;
+
+  private startReadyRetry(): void {
+    this.send({ t: 'ready', ready: true });
+    this.readyTimer = setInterval(() => this.send({ t: 'ready', ready: true }), 500);
+  }
+
+  private stopReadyRetry(): void {
+    if (this.readyTimer) clearInterval(this.readyTimer);
+    this.readyTimer = null;
+  }
+
   close(): void {
+    this.stopReadyRetry();
     this.ws.close();
   }
 }

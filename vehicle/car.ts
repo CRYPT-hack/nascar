@@ -84,6 +84,18 @@ export interface CarTuning {
 
   /** Torque gain used to level the car while airborne. */
   airRighting: number;
+
+  /**
+   * Ceiling on upward velocity, m/s, applied after the solver has run.
+   *
+   * A racing car does not go up. Anything that sends one up is a contact the
+   * solver resolved out of a deep overlap, and the only question is whether the
+   * player watches a car cartwheel or a car get shoved. This is the cap that
+   * decides which. Downward motion is left alone - falling is legitimate.
+   */
+  maxRiseSpeed: number;
+  /** Ceiling on angular speed, rad/s, applied after the solver has run. */
+  maxAngularSpeed: number;
 }
 
 export const DEFAULT_TUNING: CarTuning = {
@@ -91,7 +103,10 @@ export const DEFAULT_TUNING: CarTuning = {
   suspensionStiffness: 46000,
   suspensionDampCompress: 3400,
   suspensionDampRebound: 4600,
-  maxSuspensionForce: 26000,
+  // 8x the static wheel load. It was 13.6x, which is far more than a bump
+  // needs and enough that four wheels compressing at once - a car shoved onto
+  // another car's flank - could put 104 kN under an 780 kg chassis.
+  maxSuspensionForce: 16000,
 
   antiRoll: 14000,
 
@@ -116,6 +131,9 @@ export const DEFAULT_TUNING: CarTuning = {
   rollingResistance: 0.014,
 
   airRighting: 2.4,
+
+  maxRiseSpeed: 4.5,
+  maxAngularSpeed: 7.0,
 };
 
 // ---------------------------------------------------------------------------
@@ -551,6 +569,33 @@ export class Car {
     // Track how long the car has been off the racing surface.
     if (this.surface === 'grass' || this.surface === 'gravel') this.offTrackTicks++;
     else this.offTrackTicks = 0;
+  }
+
+  /**
+   * Clamp the solver's output. Call once per fixed step, after `world.step()`.
+   *
+   * Gate check 4 failed intermittently: about one impaired ten-car race in four
+   * launched a car metres into the air and inverted it. It never reproduced in
+   * twelve minutes of clean AI racing with no network, so it is not a
+   * spontaneous blow-up - it needs the degraded driving that comes of steering
+   * from a 100 ms-old snapshot, which puts cars into each other at angles a
+   * competent driver never manages.
+   *
+   * The cap does not prevent the contact, it bounds the consequence. A shove
+   * still moves the car, it just cannot throw it over.
+   */
+  postStep(): void {
+    const t = this.tuning;
+    const v = this.body.linvel();
+    if (v.y > t.maxRiseSpeed) {
+      this.body.setLinvel({ x: v.x, y: t.maxRiseSpeed, z: v.z }, true);
+    }
+    const a = this.body.angvel();
+    const mag = Math.hypot(a.x, a.y, a.z);
+    if (mag > t.maxAngularSpeed) {
+      const k = t.maxAngularSpeed / mag;
+      this.body.setAngvel({ x: a.x * k, y: a.y * k, z: a.z * k }, true);
+    }
   }
 
   /** True when the car is resting on its roof or side. */

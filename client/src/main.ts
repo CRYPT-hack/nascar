@@ -39,6 +39,22 @@ import { Ui } from './ui';
 /** Never simulate more than this many fixed steps in one frame. */
 const MAX_CATCHUP_STEPS = 6;
 
+/**
+ * How often an unconfirmed `ready` is re-sent, in ms.
+ *
+ * `ready` used to be sent exactly once, on a click, with no acknowledgement.
+ * A single lost packet meant the server never marked the player ready, the
+ * lobby timer expired, and the race started without them - with nothing on
+ * screen to explain it. At 2% loss with ten players that is roughly an 18%
+ * chance per race that somebody who pressed the button does not get to drive.
+ *
+ * There is no ack message and none is needed: the server broadcasts a roster
+ * whenever a ready flag changes, and that roster carries our own flag. So the
+ * roster *is* the acknowledgement, and the client simply keeps asking until
+ * what it sees matches what it asked for.
+ */
+const READY_RETRY_MS = 500;
+
 class Game {
   private readonly canvas: HTMLCanvasElement;
   private scene!: Scene;
@@ -61,7 +77,7 @@ class Game {
   private views = new Map<number, CarView>();
   private colors = new Map<number, number>();
 
-  private readonly recentInputs: InputMsg[] = [];
+  private readonly recentInputs: Omit<InputMsg, 't'>[] = [];
   private standings!: Standings;
   /**
    * True when the server is running a race this client is not in: they arrived
@@ -69,6 +85,12 @@ class Game {
    * the snapshot, so there is nothing to predict and nothing to drive.
    */
   private spectating = false;
+  /** What the player asked for. */
+  private readyIntent = false;
+  /** What the server last told us it has, or null before any roster arrives. */
+  private readyConfirmed: boolean | null = null;
+  private readyRetryAt = 0;
+
   private accumulator = 0;
   private lastFrame = 0;
   private fps = 60;
@@ -97,7 +119,7 @@ class Game {
     addEventListener('resize', () => this.resize());
 
     this.ui.onJoin = (name, color) => this.connect(name, color);
-    this.ui.onReady = (ready) => this.conn?.send({ t: 'ready', ready });
+    this.ui.onReady = (ready) => this.setReady(ready);
     this.ui.showLobby();
 
     document.getElementById('boot')?.remove();
@@ -137,6 +159,23 @@ class Game {
     this.conn.connect(defaultServerUrl(), name, color);
   }
 
+  /** Record the intent, send it, and keep sending until the server agrees. */
+  private setReady(ready: boolean): void {
+    this.readyIntent = ready;
+    this.conn?.send({ t: 'ready', ready });
+    this.readyRetryAt = performance.now() + READY_RETRY_MS;
+    this.ui.setReadyState(this.readyIntent, this.readyConfirmed);
+  }
+
+  /** Re-send an unconfirmed ready. Called once per frame; cheap when settled. */
+  private pumpReady(now: number): void {
+    if (!this.conn?.connected) return;
+    if (this.readyConfirmed === this.readyIntent) return;
+    if (now < this.readyRetryAt) return;
+    this.conn.send({ t: 'ready', ready: this.readyIntent });
+    this.readyRetryAt = now + READY_RETRY_MS;
+  }
+
   private onMessage(msg: ServerMsg): void {
     switch (msg.t) {
       case 'welcome':
@@ -148,14 +187,25 @@ class Game {
 
       case 'join':
       case 'leave':
-      case 'roster':
+      case 'roster': {
         for (const p of msg.players) this.colors.set(p.id, p.color);
+        // The roster is the acknowledgement for `ready`. See READY_RETRY_MS.
+        const me = msg.players.find((p) => p.id === this.myId);
+        if (me) this.readyConfirmed = me.ready;
         this.ui.showRoster(msg.players, this.myId);
+        this.ui.setReadyState(this.readyIntent, this.readyConfirmed);
         break;
+      }
 
       case 'state':
         this.state = msg.state;
         this.ui.setState(msg.state, msg.timer);
+        // A new race: the server clears every ready flag on the way to lobby,
+        // and our intent goes with it so we do not re-assert a stale one.
+        if (msg.state === 'lobby') {
+          this.readyIntent = false;
+          this.readyConfirmed = false;
+        }
         if (msg.state === 'grid') {
           // The server has just reset every car onto the grid. Anything the
           // prediction has queued describes a race that no longer exists.
@@ -269,6 +319,7 @@ class Game {
 
     this.prediction.updateVisual(dt);
     if (this.conn) this.prediction.setRtt(this.conn.rtt);
+    this.pumpReady(now);
     this.ui.tick();
     this.draw(now, dt);
   }
@@ -287,15 +338,15 @@ class Game {
       ? this.input.sample(FIXED_DT * 2)
       : { ...NEUTRAL_INPUT };
 
-    const msg: InputMsg = { t: 'input', seq, ...input };
-    this.recentInputs.push(msg);
+    this.recentInputs.push({ seq, ...input });
     if (this.recentInputs.length > INPUT_REDUNDANCY) this.recentInputs.shift();
 
-    // Sent regardless of phase: it keeps ackSeq advancing and doubles as the
-    // liveness signal the server's timeout watches. The last few inputs go with
-    // it, oldest first, so a dropped one is recovered before the newer inputs
-    // that would otherwise cause the server to ignore it. See INPUT_REDUNDANCY.
-    for (const m of this.recentInputs) this.conn?.send(m);
+    // One packet carrying the last few inputs, oldest first, rather than one
+    // packet each. Same redundancy - every input still rides in INPUT_REDUNDANCY
+    // consecutive packets - at a third of the packet count. Sent regardless of
+    // phase: it keeps ackSeq advancing and doubles as the liveness signal the
+    // server's timeout watches.
+    this.conn?.send({ t: 'inputs', a: [...this.recentInputs] });
     return input;
   }
 

@@ -22,7 +22,7 @@ import { fileURLToPath } from 'node:url';
 import { WebSocket } from 'ws';
 
 import { CAR_COLORS, INPUT_HZ, PROTOCOL_VERSION, TICK_HZ } from '../shared/constants';
-import type { CarSnap, ClientMsg, ServerMsg, SurfaceKind } from '../shared/protocol';
+import type { CarSnap, ClientMsg, InputMsg, ServerMsg, SurfaceKind } from '../shared/protocol';
 import type { TrackData } from '../shared/track-schema';
 import { AI_SKILLS, AiDriver, buildSpeedProfile, type DrivableView } from '../vehicle/ai-driver';
 import { DEFAULT_TUNING } from '../vehicle/car';
@@ -104,6 +104,7 @@ class HeadlessClient {
   bytes = 0;
   snaps = 0;
   rtts: number[] = [];
+  private readonly recent: Omit<InputMsg, 't'>[] = [];
   private driver: AiDriver;
   private others: V3[] = [];
   private timer: NodeJS.Timeout | null = null;
@@ -153,7 +154,7 @@ class HeadlessClient {
     switch (msg.t) {
       case 'welcome':
         this.id = msg.id;
-        this.send({ t: 'ready', ready: true });
+        this.startReadyRetry();
         this.startSending();
         break;
       case 'snap': {
@@ -165,6 +166,13 @@ class HeadlessClient {
         }
         break;
       }
+      case 'join':
+      case 'leave':
+      case 'roster':
+        // The roster is the acknowledgement for `ready`. See READY_RETRY_MS in
+        // client/src/main.ts - the same handshake, so the gate exercises it.
+        if (msg.players.some((pl) => pl.id === this.id && pl.ready)) this.stopReadyRetry();
+        break;
       case 'pong':
         this.rtts.push(Date.now() - msg.ts);
         break;
@@ -178,14 +186,10 @@ class HeadlessClient {
     this.timer = setInterval(() => {
       if (this.ws.readyState !== 1) return;
       const input = this.driver.update(this.view, 1 / INPUT_HZ, this.others);
-      this.send({
-        t: 'input',
-        seq: this.seq++,
-        throttle: input.throttle,
-        brake: input.brake,
-        steer: input.steer,
-        handbrake: input.handbrake,
-      });
+      this.recent.push({ seq: this.seq++, ...input });
+      if (this.recent.length > 3) this.recent.shift();
+      // Batched redundancy, matching the real client. See InputBatchMsg.
+      this.send({ t: 'inputs', a: [...this.recent] });
       if (++n % INPUT_HZ === 0) this.send({ t: 'ping', ts: Date.now() });
     }, 1000 / INPUT_HZ);
   }
@@ -212,7 +216,20 @@ class HeadlessClient {
     });
   }
 
+  private readyTimer: NodeJS.Timeout | null = null;
+
+  private startReadyRetry(): void {
+    this.send({ t: 'ready', ready: true });
+    this.readyTimer = setInterval(() => this.send({ t: 'ready', ready: true }), 500);
+  }
+
+  private stopReadyRetry(): void {
+    if (this.readyTimer) clearInterval(this.readyTimer);
+    this.readyTimer = null;
+  }
+
   close(): void {
+    this.stopReadyRetry();
     if (this.timer) clearInterval(this.timer);
     this.ws.close();
   }

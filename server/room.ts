@@ -522,6 +522,8 @@ export class Room {
     }
 
     this.world.world.step();
+    // Bound what the solver may have done to a car in a deep contact.
+    for (const e of racers) e.car!.postStep();
     this.tick++;
 
     if (this.state === 'racing') this.updateProgress();

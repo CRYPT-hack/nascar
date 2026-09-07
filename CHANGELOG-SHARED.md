@@ -47,3 +47,26 @@ No field, type or wire shape changes. The conversion to the physical wheel angle
 about +Y by a positive angle takes -Z toward -X) happens in exactly one place,
 `Car.step()` in vehicle/car.ts. If a wheel mesh appears to steer the wrong way,
 fix it in the renderer, not by adding a second negation.
+
+## 2026-09-07T14:20Z — shared/protocol.ts — added `InputBatchMsg` (`t: "inputs"`)
+
+**Addition, not a modification.** `InputMsg` is untouched and the server still
+accepts it; `ClientMsg` gains one member.
+
+```ts
+export interface InputBatchMsg {
+  t: 'inputs';
+  a: Omit<InputMsg, 't'>[];   // oldest first
+}
+```
+
+Why: redundancy against packet loss. Each input is carried in three consecutive
+packets, so losing any one packet still delivers it. That was already being done
+by sending the same three inputs as three separate `input` messages, which gives
+identical redundancy at three times the packet count — 90 messages per second
+upstream per client instead of 30.
+
+The server ignores any `seq` at or below the highest it has seen, so duplicates
+cost nothing and a recovered input is applied as if it had never gone missing.
+Order within `a` matters: oldest first, or a recovered input arrives after the
+newer ones and is discarded.

@@ -222,6 +222,7 @@ export class PredictedCar {
       cur.steps++;
     }
     this.rw.world.step();
+    this.car.postStep();
     this.stepIndex++;
     this.stats.pending = this.pending.length;
   }
@@ -261,6 +262,7 @@ export class PredictedCar {
       for (let s = 0; s < p.steps; s++) {
         this.car.step(p.input, FIXED_DT, this.rw.ctx);
         this.rw.world.step();
+        this.car.postStep();
         replayed++;
       }
     }
