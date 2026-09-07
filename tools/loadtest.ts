@@ -252,7 +252,15 @@ async function main(): Promise<void> {
   const allRtt = clients.flatMap((c) => c.rtts);
   const connected = clients.filter((c) => c.ws.readyState === 1).length;
 
-  const firstRss = rssSamples[0]?.rss ?? 0;
+  // Measure growth after warm-up, not from process start. The heap climbs from
+  // ~129 MB to ~146 MB in the first half minute as the physics world, the
+  // sockets and V8's own caches settle, and counting that as leakage reports a
+  // failure on a server whose memory is in fact flat. Everything from WARMUP_S
+  // onward is the part that would keep climbing if there were a real leak.
+  const WARMUP_S = 30;
+  const settled = rssSamples.filter((r) => r.t >= WARMUP_S);
+  const firstRss = (settled[0] ?? rssSamples[0])?.rss ?? 0;
+  const peakRss = rssSamples.reduce((m, r) => Math.max(m, r.rss), 0);
   const lastRss = rssSamples[rssSamples.length - 1]?.rss ?? 0;
   const rssGrowth = firstRss > 0 ? ((lastRss - firstRss) / firstRss) * 100 : 0;
 
@@ -272,17 +280,20 @@ async function main(): Promise<void> {
   console.log(
     `round trip            p50 ${f2(pct(allRtt, 50))} ms  p99 ${f2(pct(allRtt, 99))} ms  (loopback)`,
   );
-  console.log(`\nRSS start             ${mb(firstRss)} MB`);
-  console.log(`RSS end               ${mb(lastRss)} MB`);
-  console.log(`RSS growth            ${rssGrowth.toFixed(1)}%`);
+  console.log(`
+RSS at start           ${mb(rssSamples[0]?.rss ?? 0)} MB`);
+  console.log(`RSS after warm-up      ${mb(firstRss)} MB   (t = ${WARMUP_S} s)`);
+  console.log(`RSS at end             ${mb(lastRss)} MB`);
+  console.log(`RSS peak               ${mb(peakRss)} MB`);
+  console.log(`RSS growth post-warmup ${rssGrowth >= 0 ? '+' : ''}${rssGrowth.toFixed(1)}%`);
 
   console.log('\n--- gate checks ---------------------------------------------');
   const check1 = achievedHz > TICK_HZ * 0.98 && headroom >= 40;
-  const check5 = Math.abs(rssGrowth) < 15;
+  const check5 = Math.abs(rssGrowth) < 10 && settled.length >= 3;
   console.log(`1. server stability   ${check1 ? 'PASS' : 'FAIL'}  ` +
     `(${achievedHz.toFixed(1)} Hz, ${headroom.toFixed(0)}% headroom at p99; needs >=40%)`);
   console.log(`5. memory flat        ${check5 ? 'PASS' : 'FAIL'}  ` +
-    `(RSS ${rssGrowth >= 0 ? '+' : ''}${rssGrowth.toFixed(1)}% over ${elapsed.toFixed(0)} s; needs <15%)`);
+    `(RSS ${rssGrowth >= 0 ? '+' : ''}${rssGrowth.toFixed(1)}% from t=${WARMUP_S}s to t=${elapsed.toFixed(0)}s; needs <10%)`);
   if (elapsed < 300) console.log('   note: check 1 wants 5 minutes, check 5 wants 10. This run was shorter.');
 
   for (const c of clients) c.close();
