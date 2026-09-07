@@ -8,9 +8,10 @@
  * changes, and swaps the body for the real environment in client/src/render/.
  *
  * `CarView` and `carColor` are Instance A's. Car meshes were assigned to
- * neither instance (STATUS-INSTANCE-B.md §3); Instance A has taken them, and
- * they now come from the glTF pack in public/cars via render/car-model.ts,
- * with the old boxes kept as the fallback when the pack will not load.
+ * neither instance (STATUS-INSTANCE-B.md §3); Instance A has taken them. The
+ * geometry is built in render/car-mesh.ts from the dimensions in
+ * shared/constants.ts, so the car drawn is the size of the car that collides.
+ * The old boxes stay as a fallback that nothing should now reach.
  */
 
 import * as THREE from 'three';
@@ -21,11 +22,9 @@ import { configureRenderer, createEnvironment } from './render/scene';
 import {
   bodyMaterial,
   getCarModel,
-  glassMaterial,
-  wheelMaterial,
   WHEEL_REST_Y,
   type CarModel,
-} from './render/car-model';
+} from './render/car-mesh';
 import { createGroundPlane, createTrackView, type TrackView } from './render/track-view';
 import type { Q4, V3 } from '../../vehicle/math3';
 
@@ -54,23 +53,16 @@ export class CarView {
     else this.buildBoxes(colorIndex, isLocal);
   }
 
-  /** The glTF pack in public/cars, normalised by render/car-model.ts. */
+  /** Geometry built to the physics dimensions by render/car-mesh.ts. */
   private buildModel(model: CarModel, isLocal: boolean): void {
     const body = new THREE.Mesh(model.body, bodyMaterial);
     body.castShadow = true;
     this.group.add(body);
 
-    if (model.glass) {
-      const glass = new THREE.Mesh(model.glass, glassMaterial);
-      // Transparent, so it must not write depth over the car behind it.
-      glass.castShadow = false;
-      this.group.add(glass);
-    }
-
     for (const w of model.wheels) {
       const pivot = new THREE.Object3D();
       pivot.position.copy(w.position);
-      const tyre = new THREE.Mesh(w.geometry, wheelMaterial);
+      const tyre = new THREE.Mesh(w.geometry, bodyMaterial);
       tyre.castShadow = true;
       pivot.add(tyre);
       this.group.add(pivot);

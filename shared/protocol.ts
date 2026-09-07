@@ -175,7 +175,8 @@ export interface PongMsg {
 
 export interface ErrorMsg {
   t: 'error';
-  code: 'version' | 'full' | 'malformed';
+  /** 'timeout': the room gave up on this client and closed the socket. */
+  code: 'version' | 'full' | 'malformed' | 'timeout';
   message: string;
 }
 

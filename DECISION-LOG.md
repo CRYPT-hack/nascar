@@ -1091,3 +1091,119 @@ round the circuit and asserts the lobby brings it back. It strands the car
 **upright and on the racing line** so that the stuck-car rescue has no reason to
 fire and cannot be what moves it. Confirmed to fail for the right reason:
 commenting out the one call gives `482.2 m from the nearest slot`.
+
+---
+
+## The car models are built, not loaded
+
+The supplied glTF pack went in first and did not survive being looked at
+properly. Parked and photographed from four angles it has:
+
+- **side skirts outboard of the bodywork**, so they hang off the car as thin
+  detached blades several metres long
+- **no wheel arches** — the wheels are swallowed by a slab body and only the
+  bottom of each tyre shows
+- a **doorstop silhouette**: a flat wide slab with a small box on top
+
+It also brings its own proportions — 2.346 m wide against a 1.9 m collider, with
+the overall width set by the wheels rather than the body — so no uniform scale
+fixes one dimension without breaking another. Scaling on overall width, which is
+what shipped first, made the *body* 1.56 m against a 1.9 m collider: every car
+was visibly undersized for the track it was on.
+
+None of that is a scale bug. It is the shape.
+
+`client/src/render/car-mesh.ts` builds the car instead. Every dimension is read
+from `shared/constants.ts`, so the car that is drawn is the size of the car that
+collides: 4.5 m long, 1.9 m wide, wheels on the 2.8 m wheelbase and 1.6 m track,
+tyres of exactly `CAR.wheelRadius` with their contact patch on the ground.
+
+The shell is a rounded-rectangle cross-section lofted through sixteen stations.
+The arches come out of that for free: the underside rises above the tyre over a
+short run of z either side of each axle, so the loft walls itself into an arch
+and the wheel shows through it. On top of the shell sit a greenhouse (with the
+windows painted in rather than modelled as glass), a bonnet and roof stripe,
+door roundels, sills, splitter, grille, lamps and a rear spoiler.
+
+Shading is flat, and deliberately: the circuit, trees, stands and barriers are
+all low-poly and flat-shaded, and a smooth-shaded car in that world looks like
+it wandered in from another game.
+
+### Cost
+
+| | measured |
+|---|---|
+| meshes per car | **5** — body and four wheels (6 for the local car, which carries a marker) |
+| six cars racing, sampled frame | **48 draw calls**, 155k triangles |
+| assets downloaded | **none**; `public/cars/` and its 2.9 MB are gone |
+
+Livery is derived rather than authored: the base coat is the colour the player
+picked, and the accent flips between near-black and near-white on the base
+coat's luminance, so a yellow car gets black stripes and a navy one white.
+
+### Two bugs, and why there is now a test
+
+**Every mirrored part was inside out.** They are written `box(s * a, s * b, ...)`
+for `s` of -1 and 1, which for the left side hands `BoxGeometry` a negative
+extent — that mirrors it. The left headlamps, sills and door panels rendered as
+dark slivers while the right-hand ones were fine. `box()` now sorts its extents.
+
+**The glTF pack shipped no normals on any primitive**, and a lit material with
+no normals renders pure black. That one cost real time because the console said
+nothing: the only errors were harmless warnings about missing accessor min/max,
+and the symptom looks like a lighting or colour-space problem and is neither. It
+was found by running the geometry pipeline outside the browser and printing each
+primitive's attribute list, which said `attrs=position` nine times.
+
+Both are arithmetic, and arithmetic is checkable, so `tools/carmeshtest.ts` (30
+checks, in `npm test`) now covers them. The important one is winding: a closed
+mesh wound outward has positive signed volume, and **inside-out geometry is
+invisible in a screenshot until the light happens to catch it from the wrong
+side**. Confirmed to fail for the right reason — flipping the loft's winding
+gives `-2.666 m^3`.
+
+The pack itself stays in `models/` for provenance. Nothing loads it.
+
+---
+
+## A backgrounded player was being dropped, and became a ghost
+
+Found while trying to photograph a car: a client that had been sitting in a
+hidden tab could no longer start a race. Ready did nothing, the roster never
+came back, snapshots carried no car, and nothing on screen said why.
+
+The room had dropped the entrant. `CLIENT_TIMEOUT_MS` is 15 s and the client
+pings once a second — but from a `setTimeout` chain, and **browsers throttle
+timers hard in a hidden tab**, to once a minute after a few minutes
+backgrounded. Well past 15 s. Anyone who alt-tabs at the demo would have been
+ejected for it.
+
+The socket stayed open through all of this, and that is what turned a
+disconnection into a ghost: `onReady` returns early when there is no entrant, so
+no roster is broadcast and no error is sent. The player is connected to a room
+that has no record of them.
+
+Two fixes:
+
+- **Liveness is now a transport fact.** The server sends a WebSocket ping every
+  4 s and touches the entrant on the pong. The browser answers those itself,
+  without waking page script, so it keeps reporting liveness through any amount
+  of timer throttling — while a genuinely gone client still fails it.
+- **The socket goes with the entrant.** `RoomHooks.evict` tells the transport to
+  send an error and close, so a dropped player lands on the disconnected screen
+  instead of a lobby that ignores them. This adds `'timeout'` to
+  `ErrorMsg.code`; see CHANGELOG-SHARED.md.
+
+Verified end to end: 80 s idle in a hidden tab, then Ready is confirmed and the
+race starts. Before the fix the entrant was gone and the button did nothing.
+`roomtest` covers the eviction path (40 checks).
+
+### Not a bug, but it wasted time twice
+
+`requestAnimationFrame` does not run at all in a hidden tab. That is why a car
+being driven with a held key crawled at 3 km/h, and why the client had no car
+views while happily reporting `state: racing` and `fps: 60` — `fps` is only
+updated inside the frame loop, so it reads as whatever it was when the loop
+stopped. It is the same trap `netcheck.ts` was written to avoid, and it means
+**no frame-rate number can be taken from this session**; draw-call and triangle
+counts are fine, because they describe the last frame that did render.

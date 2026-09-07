@@ -14,7 +14,12 @@ import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { COUNTDOWN_SECONDS, RESULTS_SECONDS, TICK_HZ } from '../shared/constants';
+import {
+  CLIENT_TIMEOUT_MS,
+  COUNTDOWN_SECONDS,
+  RESULTS_SECONDS,
+  TICK_HZ,
+} from '../shared/constants';
 import type { ServerMsg } from '../shared/protocol';
 import type { TrackData } from '../shared/track-schema';
 import { Room, type RoomOptions } from '../server/room';
@@ -266,6 +271,34 @@ async function main(): Promise<void> {
     check('the remaining one is intact', room.entrants.has(b.id));
     run(room, 0.5);
     check('the room keeps stepping', room.tick > 0);
+    room.destroy();
+  }
+
+  // -------------------------------------------------------------------------
+  console.log('\na timed-out client is evicted, not left as a ghost');
+  {
+    const evicted: number[] = [];
+    const room = new Room(
+      track,
+      { send: () => {}, broadcast: () => {}, evict: (id) => evicted.push(id) },
+      {},
+    );
+    const a = room.join('Ghost', 0);
+    room.step();
+    check('present while it is still being heard from', room.entrants.has(a.id));
+
+    // Reach past the timeout without burning wall time on it.
+    a.lastSeenMs = Date.now() - CLIENT_TIMEOUT_MS - 1000;
+    room.step();
+
+    check('the entrant is removed', !room.entrants.has(a.id));
+    eq('and the transport is told to close the socket', evicted.join(','), String(a.id));
+
+    // This is the whole point. A client whose entrant was gone but whose socket
+    // stayed open could not ready, got no roster back, and saw no error - it just
+    // sat in a lobby whose Ready button silently did nothing.
+    room.onReady(a.id, true);
+    check('a ready from the ghost changes nothing', room.state === 'lobby');
     room.destroy();
   }
 

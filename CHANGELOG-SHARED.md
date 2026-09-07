@@ -96,3 +96,17 @@ physics instead.
 
 The physics builder owns this convention. If a banked corner ever looks wrong in
 the renderer, fix the renderer — do not flip the generator.
+
+## 2026-09-07 — Instance A — `ErrorMsg.code` gains `'timeout'`
+
+Additive: one new member of an existing union. No field, type or wire shape
+changes, and no existing code is affected.
+
+The server now closes the socket when it drops a client for inactivity, and
+sends this first so the client can say why. Previously the entrant was removed
+and the socket left open, which left the player connected to a room that had no
+entrant for them: `onReady` returned early, no roster came back, snapshots
+carried no car, and the lobby's Ready button silently did nothing.
+
+Clients that do not recognise the code should treat it like any other error and
+show the message.

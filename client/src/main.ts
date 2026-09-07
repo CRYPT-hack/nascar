@@ -32,7 +32,7 @@ import { InputSource } from './input';
 import { NetStats } from './netstats';
 import { INPUT_REDUNDANCY, PredictedCar } from './prediction';
 import { RemoteCars } from './remote';
-import { preloadCarModels } from './render/car-model';
+import { preloadCarModels } from './render/car-mesh';
 import { CarView, Scene } from './scene';
 import { Standings } from './standings';
 import { Ui } from './ui';
@@ -104,8 +104,8 @@ class Game {
   async start(): Promise<void> {
     await initPhysics();
 
-    // The car pack does not depend on the track, so fetch both at once rather
-    // than adding 2.9 MB of serial latency to the boot.
+    // Car meshes are built, not fetched, but they are still independent of the
+    // track, so neither waits on the other.
     const [track] = await Promise.all([this.loadTrack(), preloadCarModels()]);
     this.track = track;
     this.rw = createRaceWorld(this.track);

@@ -22,6 +22,12 @@ import type { ClientMsg, ServerMsg } from '../shared/protocol';
 import type { TrackData } from '../shared/track-schema';
 import { Room, type RoomOptions } from './room';
 
+/**
+ * Transport ping interval. Comfortably under CLIENT_TIMEOUT_MS so a client has
+ * to miss several before the room gives up on it.
+ */
+const HEARTBEAT_MS = 4000;
+
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
@@ -52,6 +58,7 @@ export class GameServer {
   private readonly staticDirs: string[];
   private readonly trackUrl: string;
   private timer: NodeJS.Timeout | null = null;
+  private heartbeat: NodeJS.Timeout | null = null;
   private fatalReported = false;
 
   constructor(track: TrackData, opts: ServerOptions = {}) {
@@ -64,6 +71,7 @@ export class GameServer {
       {
         send: (id, msg) => this.sendTo(id, msg),
         broadcast: (msg) => this.broadcast(msg),
+        evict: (id, why) => this.evict(id, why),
         sendSnapshots: (tick, carsJson, ackSeqOf) => {
           // One serialisation of the car array for the whole room; only the
           // ackSeq prefix differs per client.
@@ -114,11 +122,14 @@ export class GameServer {
       }
     });
     this.startLoop();
+    this.startHeartbeat();
   }
 
   async stop(): Promise<void> {
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
+    if (this.heartbeat) clearInterval(this.heartbeat);
+    this.heartbeat = null;
     for (const ws of this.sockets.values()) ws.close();
     await new Promise<void>((r) => this.wss.close(() => r()));
     await new Promise<void>((r) => this.http.close(() => r()));
@@ -153,7 +164,51 @@ export class GameServer {
 
   // -------------------------------------------------------------------------
 
+  /**
+   * Drop a client the room has given up on.
+   *
+   * The room removes the entrant; if the socket stayed open the player would
+   * be a ghost - connected, with no entrant, no car and a Ready button that
+   * silently does nothing. Closing it puts them on the disconnected screen,
+   * which at least says what happened.
+   */
+  private evict(id: number, why: string): void {
+    const ws = this.sockets.get(id);
+    if (!ws) return;
+    this.sendRaw(ws, { t: 'error', code: 'timeout', message: `dropped: ${why}` });
+    this.sockets.delete(id);
+    ws.close();
+  }
+
+  /**
+   * Transport-level heartbeat.
+   *
+   * The client pings from a `setTimeout` chain, which browsers throttle hard
+   * in a hidden tab - to once a minute after a few minutes backgrounded, well
+   * past CLIENT_TIMEOUT_MS. A player who alt-tabbed was being dropped from the
+   * room for it. A WebSocket ping is answered by the browser itself rather
+   * than by page script, so it keeps reporting liveness through any amount of
+   * timer throttling, and a genuinely gone client still fails it.
+   */
+  private startHeartbeat(): void {
+    this.heartbeat = setInterval(() => {
+      for (const ws of this.sockets.values()) {
+        if (ws.readyState !== ws.OPEN) continue;
+        ws.ping();
+      }
+    }, HEARTBEAT_MS);
+    // Never hold the process open for a heartbeat.
+    this.heartbeat.unref?.();
+  }
+
   private onConnection(ws: WebSocket): void {
+    // The browser answers this without waking page script, so it survives the
+    // timer throttling that a hidden tab imposes on the client's own ping.
+    ws.on('pong', () => {
+      const id = this.ids.get(ws);
+      if (id !== undefined) this.room.touch(id);
+    });
+
     ws.on('message', (raw) => {
       let msg: ClientMsg;
       try {

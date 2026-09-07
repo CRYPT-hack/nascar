@@ -116,6 +116,16 @@ export interface RoomHooks {
    * transport can serialise the car array once and splice per client.
    */
   sendSnapshots?(tick: number, carsJson: string, ackSeqOf: (id: number) => number): void;
+  /**
+   * The room has given up on this entrant and removed it. The transport should
+   * close the socket rather than leave it open.
+   *
+   * Without this a timed-out client keeps a live socket to a room that no
+   * longer has an entrant for it: `onReady` returns early, no roster comes
+   * back, snapshots carry no car, and the player sits looking at a lobby whose
+   * Ready button does nothing and which reports no error at all.
+   */
+  evict?(id: number, why: string): void;
 }
 
 export interface Entrant {
@@ -680,7 +690,11 @@ export class Room {
     const now = Date.now();
     for (const e of [...this.entrants.values()]) {
       if (e.ai) continue;
-      if (now - e.lastSeenMs > CLIENT_TIMEOUT_MS) this.leave(e.id);
+      if (now - e.lastSeenMs <= CLIENT_TIMEOUT_MS) continue;
+      this.leave(e.id);
+      // Tell the transport, so the socket goes with the entrant. A player who
+      // is dropped should see that they were dropped.
+      this.hooks.evict?.(e.id, 'timed out');
     }
   }
 
