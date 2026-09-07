@@ -14,7 +14,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { COUNTDOWN_SECONDS, TICK_HZ } from '../shared/constants';
+import { COUNTDOWN_SECONDS, RESULTS_SECONDS, TICK_HZ } from '../shared/constants';
 import type { ServerMsg } from '../shared/protocol';
 import type { TrackData } from '../shared/track-schema';
 import { Room, type RoomOptions } from '../server/room';
@@ -162,6 +162,37 @@ async function main(): Promise<void> {
         .filter((r) => r.totalMs !== null)
         .every((r, i, arr) => i === 0 || (arr[i - 1]!.totalMs ?? 0) <= (r.totalMs ?? 0)),
     );
+
+    // A race ends wherever it ends, and the lobby that follows should not be
+    // showing the wreckage. Strand the car a quarter of the way round the
+    // circuit - upright and on the racing line, so the stuck-car rescue has no
+    // reason to fire and cannot be what moves it - and check the return to
+    // lobby puts it back on the grid.
+    const w = track.waypoints[Math.floor(track.waypoints.length / 4)]!;
+    a.car?.reset({ x: w.p[0], y: w.p[1] + 0.6, z: w.p[2] }, 0);
+    const strandedFromGrid = Math.min(
+      ...track.spawnGrid.map((g) => Math.hypot(g.p[0] - w.p[0], g.p[2] - w.p[2])),
+    );
+    check(
+      'the stranded car really is away from the grid',
+      strandedFromGrid > 50,
+      `${strandedFromGrid.toFixed(0)} m from the nearest slot`,
+    );
+
+    // The room only enters 'finished' once the leader is home and the grace
+    // period is up, so wait for the lobby rather than assume a fixed delay.
+    for (let i = 0; i < RESULTS_SECONDS + 90 && room.state !== 'lobby'; i++) run(room, 1);
+    eq('the room returns to the lobby', room.state, 'lobby');
+    const p = a.car?.body.translation();
+    const parkedFromGrid = p
+      ? Math.min(...track.spawnGrid.map((g) => Math.hypot(g.p[0] - p.x, g.p[2] - p.z)))
+      : Infinity;
+    check(
+      'and parks the stranded car back on the grid',
+      parkedFromGrid < 2,
+      `${parkedFromGrid.toFixed(1)} m from the nearest slot`,
+    );
+
     room.destroy();
   }
 

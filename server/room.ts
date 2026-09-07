@@ -371,6 +371,7 @@ export class Room {
       this.firstReadyTick = -1;
       this.leaderFinishTick = -1;
       for (const e of this.entrants.values()) e.ready = false;
+      this.parkOnGrid();
       this.hooks.broadcast({ t: 'roster', players: this.roster() });
     }
 
@@ -388,6 +389,28 @@ export class Room {
     if (this.state === 'grid') return Math.max(0, 3 - elapsed);
     if (this.state === 'finished') return Math.max(0, RESULTS_SECONDS - elapsed);
     return null;
+  }
+
+  /**
+   * Put the surviving cars back on the grid between races.
+   *
+   * A race ends wherever it ends. Without this a player who finished in the
+   * gravel sits in the gravel through the whole lobby, facing a barrier or
+   * upside down against a tyre wall, until the next grid forms. It looks
+   * broken, and it is the first thing anyone waiting for a race looks at.
+   *
+   * Deliberately not `placeOnGrid`: that decides race entry, and everyone has
+   * just been un-readied, so it would take every car away and leave the lobby
+   * with nothing to show.
+   */
+  private parkOnGrid(): void {
+    let slot = 0;
+    for (const e of this.entrants.values()) {
+      if (!e.car) continue;
+      const g = this.track.spawnGrid[slot % this.track.spawnGrid.length]!;
+      e.spawnSlot = slot++;
+      e.car.reset({ x: g.p[0], y: g.p[1], z: g.p[2] }, g.rotY);
+    }
   }
 
   /**

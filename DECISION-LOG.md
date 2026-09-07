@@ -1068,3 +1068,26 @@ the body primitives unmerged is the switch to flip if that changes.
   real, because they are counts from the last rendered frame; a frames-per-second
   number from here would not be. It needs measuring on the venue machine.
 - Ten cars **on a projector**, which is what B tuned the contrast and fog for.
+
+---
+
+## Cars are parked back on the grid between races
+
+Found during the join-path verification and left for the polish pass. A race
+ends wherever it ends, and `setState('lobby')` repositioned nothing — only
+`placeOnGrid()` did, and that runs on the way *into* a race. So a player who
+finished in the gravel sat in the gravel for the whole lobby, facing a barrier
+or upside down against a tyre wall, until the next grid formed. It resolved
+itself at the next race and was untidy rather than broken, but it is the first
+thing anyone waiting for a race looks at.
+
+`parkOnGrid()` now runs on entry to the lobby. It is deliberately not
+`placeOnGrid()`: that decides race entry, and everyone has just been un-readied,
+so reusing it would take every car away and leave the lobby with nothing to
+show.
+
+The check added with it (`roomtest`, now 36) strands a car a quarter of the way
+round the circuit and asserts the lobby brings it back. It strands the car
+**upright and on the racing line** so that the stuck-car rescue has no reason to
+fire and cannot be what moves it. Confirmed to fail for the right reason:
+commenting out the one call gives `482.2 m from the nearest slot`.
