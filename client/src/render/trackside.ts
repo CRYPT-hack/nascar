@@ -211,8 +211,15 @@ function createGantry(frames: Frame[], plan: SectionPlan): THREE.Group {
   const group = new THREE.Group();
   group.name = 'gantry';
 
-  const halfL = outerHalfWidth(f.width, plan.leftWidth[0]!) * 0.55;
-  const halfR = outerHalfWidth(f.width, plan.rightWidth[0]!) * 0.55;
+  // Posts stand on the barrier line, which is where a real gantry's legs go.
+  //
+  // Previously a fraction of the footprint, which only worked while the
+  // footprint was much wider than the road. When the run-off was narrowed to
+  // match the physics builder (hw+9 rather than hw+15.1) that fraction put the
+  // legs 0.5 m outside the track edge on the 16 m pit straight — a pillar
+  // standing on the kerb, directly ahead of the grid.
+  const halfL = outerHalfWidth(f.width, plan.leftWidth[0]!);
+  const halfR = outerHalfWidth(f.width, plan.rightWidth[0]!);
   const postMat = new THREE.MeshStandardMaterial({ color: 0x3d444d, roughness: 0.6, metalness: 0.35 });
   const beamMat = new THREE.MeshStandardMaterial({ color: 0xd8dde3, roughness: 0.55, metalness: 0.2 });
 

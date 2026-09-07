@@ -154,13 +154,14 @@ function main(): void {
 
     // Geometry is generated on both server and client from this JSON, so it is
     // verified here rather than discovered at runtime by whoever boots first.
-    const { problems, stats } = checkTrackGeometry(track);
+    const { problems, warnings, stats } = checkTrackGeometry(track);
     console.log(`    collision       ${stats.collisionTris} tris (${stats.collisionRatio} of visual)`);
     console.log(`    barriers        ${stats.barrierTris} tris`);
     console.log(`    visual          ${stats.visualTris} tris`);
     console.log(`    footprint       +/- ${stats.footprintHalfWidth} m to barrier`);
     console.log(`    gravel run-off  ${stats.gravelPercent}% of edges`);
     console.log(`    sampler error   ${stats.maxCentreLateral} m lateral, ${stats.maxHeightErr} m height`);
+    for (const w of warnings) console.log(`    note: ${w}`);
     if (problems.length) {
       console.log(`    GEOMETRY PROBLEMS:`);
       for (const p of problems.slice(0, 12)) console.log(`      - ${p}`);
