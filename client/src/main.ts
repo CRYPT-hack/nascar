@@ -192,7 +192,16 @@ class Game {
 
     const mine = msg.cars.find((c) => c.id === this.myId);
     if (!mine) {
-      // No car of ours in the race. Watch it, and be on the grid for the next.
+      // Having no car in the snapshot only means "spectating" while a race is
+      // actually on. In the lobby it just means the grid has not formed yet,
+      // and reading it as spectating left "Race in progress" on screen while
+      // everyone sat in the lobby waiting for someone to press Ready.
+      const raceOn = this.state === 'grid' || this.state === 'countdown' || this.state === 'racing';
+      if (!raceOn) {
+        this.spectating = false;
+        this.ui.setSpectating(false, rows.length);
+        return;
+      }
       if (!this.spectating) {
         this.spectating = true;
         this.spawned = false;

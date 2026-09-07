@@ -110,6 +110,16 @@ export class Ui {
   }
 
   showRoster(players: PlayerInfo[], myId: number): void {
+    // The button follows the server's view of us, never a local flag.
+    //
+    // On the way back to the lobby the server broadcasts the roster (with every
+    // ready flag cleared) before it broadcasts the state change, so a button
+    // rendered from a local `isReady` was rebuilt while that flag was still
+    // true and then never re-rendered. It read "Ready - click to cancel" beside
+    // a roster line reading "waiting", and the next race never started because
+    // everyone believed they had already readied up.
+    this.isReady = players.find((p) => p.id === myId)?.ready ?? false;
+
     this.roster.replaceChildren();
     const head = el('div', 'roster-head');
     head.textContent = `Drivers (${players.length})`;
@@ -127,13 +137,14 @@ export class Ui {
       this.roster.appendChild(row);
     }
 
+    const label = (r: boolean) => (r ? 'Ready — click to cancel' : 'Ready');
     const btn = document.createElement('button');
     btn.className = 'ready';
-    btn.textContent = this.isReady ? "Ready — click to cancel" : 'Ready';
+    btn.textContent = label(this.isReady);
     btn.addEventListener('click', () => {
       this.isReady = !this.isReady;
       this.onReady?.(this.isReady);
-      btn.textContent = this.isReady ? "Ready — click to cancel" : 'Ready';
+      btn.textContent = label(this.isReady);
     });
     this.roster.appendChild(btn);
   }
@@ -151,7 +162,6 @@ export class Ui {
           timer === null ? '' : `Starting in ${Math.ceil(timer)}s — ready up`;
         this.banner.style.display = timer === null ? 'none' : 'block';
         this.results.style.display = 'none';
-        this.isReady = false;
         this.spectating = false;
         break;
       case 'grid':

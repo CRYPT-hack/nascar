@@ -391,3 +391,28 @@ The handler has to go on the `WebSocketServer` as well as the http server,
 because `ws` re-emits the http error and it is that copy which is fatal.
 
 `npm test` — 33 checks, ~40 s.
+
+
+### 2026-09-07 — Two lobby bugs only a full race cycle would show
+
+Both found by running the whole lifecycle in a browser — lobby, grid, countdown,
+race, results, back to lobby — rather than by testing the pieces. Neither could
+have been caught by the headless suite, because both are about what is on
+screen after the server has already done the right thing.
+
+**The Ready button lied after every race.** On the way back to the lobby the
+server broadcasts the roster (every ready flag cleared) *before* it broadcasts
+the state change. The button was rendered from a local `isReady` flag, so it was
+rebuilt while that flag was still true and then never re-rendered: it read
+"Ready — click to cancel" next to a roster line reading "waiting". Every player
+would have believed they had readied up, and the second race would never have
+started. The button now takes its state from the roster, which is the server's
+view, and there is no local flag to disagree with.
+
+**"Race in progress" stayed on screen in the lobby.** Having no car in the
+snapshot was read as "spectating" regardless of phase — but in the lobby it just
+means the grid has not formed yet. The check is now gated on the race actually
+being on.
+
+Neither is deep, and both would have been embarrassing in front of an audience:
+the first one stops the demo dead after the first race.
