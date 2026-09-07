@@ -313,6 +313,16 @@ export class PredictedCar {
     const inFlight = (this.rttMs / 1000) * INPUT_HZ;
     this.queueDepth = Math.max(0, gap - inFlight);
 
+    // Integral control on the depth error.
+    //
+    // No asymmetric anti-windup term. One was tried, on the theory that a
+    // stalled client loop - a backgrounded tab, where requestAnimationFrame
+    // simply stops - would drive this to its limit and leave the client running
+    // fast afterwards. It does drive it to the limit, but it unwinds on its own
+    // the moment frames resume, because the queue is then very deep and the
+    // error correspondingly large and negative. Adding a faster unwind on top
+    // of that only made the controller chase jitter, and holds under sustained
+    // latency went from 0.97% back up to 1.8%.
     const err = TARGET_DEPTH - this.queueDepth;
     this.paceBoost = clamp(this.paceBoost + err * PACE_GAIN, -PACE_MAX, PACE_MAX);
     this.paceScale = 1 + this.paceBoost;

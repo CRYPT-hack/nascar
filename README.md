@@ -48,6 +48,11 @@ from the game server itself — one process, one port, one URL to type (§9).
 
 Server environment: `PORT`, `TRACK`, `LAPS`, `AI_FILL` (fill the grid with AI).
 
+The `server` script passes `--max-old-space-size=96`. Without it V8 grows its
+heap to absorb snapshot serialisation and RSS climbs to ~167 MB before
+asymptoting; with it RSS is flat at ~138 MB, and the tick rate and CPU headroom
+are identical either way. See the hour-12 gate in DECISION-LOG.md.
+
 Client query parameters: `?track=oval`, `?server=ws://host:8080`, and the
 network simulator `?lag=100&jitter=20&loss=0.02`. **F3** toggles the netcode
 overlay.

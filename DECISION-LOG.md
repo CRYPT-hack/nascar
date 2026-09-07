@@ -210,6 +210,12 @@ it; a random cause would not hold error/speed fixed to three decimal places.
    minimum only reads true flight time when the queue actually empties. When it
    does not, the floor tracks the gap upward, the estimate collapses toward
    zero, and the controller speeds up a client whose queue is already nine deep.
+6. *An asymmetric anti-windup term*, on the theory that a backgrounded tab -
+   where requestAnimationFrame simply stops - would peg the controller and leave
+   the client running fast afterwards. It does peg it, and it unwinds on its own
+   the moment frames resume, because the queue is then very deep and the error
+   correspondingly large. Adding a faster unwind on top only made the controller
+   chase jitter: holds under sustained latency went from 0.97% back up to 1.8%.
 
 **What worked.** `seq - ackSeq` is inputs in flight plus inputs queued, and the
 measured round trip converts the first term into inputs, so
@@ -226,3 +232,118 @@ Under 100 ms latency with 2% loss the controller saturates and holds still
 occur on about 1% of periods, leaving a 1.97 m p99 correction with zero hard
 snaps. That residue is a real consequence of a lost input arriving a redundancy
 interval late, and it is not on the path to the demo, which runs on a LAN (§9).
+
+
+---
+
+## HOUR-12 GATE (HANDOFF.md §7)
+
+Run on Interlagos, 2883 m, 6720 collision triangles. Every number below is from
+a harness in `tools/` that can fail; the commands are in README.md. Where a
+check has more than one honest reading, both are given.
+
+### 1. Server stability — **PASS**
+
+`node --expose-gc --import tsx tools/loadtest.ts 10 620`
+Ten real WebSocket clients, each driving with a full AI over a view rebuilt from
+its own snapshot stream, for ten minutes.
+
+| | measured | required |
+|---|---|---|
+| tick rate | 60.00 Hz | 60 Hz |
+| step time p50 | 3.52 ms of a 16.67 ms budget | |
+| step time p99 | 6.95 ms | |
+| step time max | 9.15 ms | |
+| **CPU headroom at p99** | **58.3%** | ≥40% |
+| bandwidth | 48.3 KB/s down per client | |
+
+Clients that sat still would have understated this badly — ten cars parked on
+the grid cost 1 ms a step, ten cars racing cost 3.5.
+
+### 2. Local responsiveness — **PASS**
+
+`npx tsx tools/netcheck.ts 3 1 0.001 60` — LAN latency, which is what the race
+is played at (§9). Runs the real `PredictedCar` against the real server.
+
+| | measured |
+|---|---|
+| prediction error p50 / p99 / max | 0.001 / 0.001 / **0.003 m** |
+| hard snaps | **0** |
+| corrections in 60 s | 2 |
+| server input holds | 0 in 1558 periods |
+
+The car responds on the frame the key is pressed — prediction is immediate by
+construction — and the server's answer agrees with it to 3 mm.
+
+**Honest caveat.** At 100 ms latency with 2% loss the pacing controller
+saturates, the server still holds an input on ~1% of periods, and p99
+correction rises to 1.97 m — with zero hard snaps, and p50/p75 still at 1 mm.
+§7 specifies that impairment for check 3, not check 2, and the demo runs on a
+LAN; the residue is recorded above rather than hidden.
+
+### 3. Remote smoothness — **PASS**
+
+`npx tsx tools/netcheck.ts 100 20 0.02 90` — the impairment §7 actually names.
+
+| | measured | required |
+|---|---|---|
+| **teleports** | **0** in 23,325 sampled frames | 0 |
+| worst frame | 2.21× the car's reported speed | |
+| stale frames | 0.21% | <5% |
+| interpolation buffer | 58 snapshots, 75 ms behind newest | |
+
+A teleport is a frame whose *implied speed* exceeds three times the speed the
+server reports for that car — invariant to frame timing, unlike per-frame
+displacement, which reported 348 false teleports on a stream that was perfectly
+smooth.
+
+### 4. Contact — **PASS**
+
+Two ways, because a rig and a race stress different things.
+
+`npx tsx tools/drivetest.ts` — two cars at 100 km/h with closing velocity
+imposed directly (steering them together does not work: quarter lock at 150 km/h
+barely moves the car, and the first version of this test passed while the cars
+stayed 4.4 m apart):
+
+| closing rate | closest gap | worst up.y | max air | verdict |
+|---|---|---|---|---|
+| 1.5 m/s | 1.90 m — touched | 1.00 / 1.00 | 0.00 m | no flip, no launch |
+| 6.0 m/s | 1.89 m — touched | 1.00 / 1.00 | 0.00 m | no flip, no launch |
+
+`npx tsx tools/laptest.ts interlagos 10 3` — ten cars, three laps, all finishing:
+worst attitude **up.y 0.98**, greatest height **0.18 m**, **0** frames airborne.
+
+### 5. Memory — **PASS**, with `--max-old-space-size=96`
+
+Judged on heap after a forced collection and on Rapier's WASM memory, not on
+RSS. Over five minutes with the cap:
+
+| | warm-up (t=30 s) | end | change |
+|---|---|---|---|
+| heapUsed after forced GC | 27.0 MB | 17.1 MB | **−36.7%** |
+| external + arrayBuffers (WASM) | 23.6 MB | 23.6 MB | **−0.1%** |
+| rss | 125.2 MB | 137.8 MB | +10.1%, slope +1.4% over the last quarter |
+
+Without the cap, RSS climbs to ~167 MB over ten minutes and asymptotes, because
+V8 sizes its heap for the allocation churn of serialising snapshots and does not
+hand the pages back. Capping it makes RSS flat **with no cost at all** — 60.00 Hz
+and 49.7% headroom either way. That is the proof it was never a leak, and the
+flag is now in the `server` npm script.
+
+### Score: 5 / 5 → continue to full 10-player
+
+§7: *"4–5 pass → continue to full 10-player. You are on track."*
+
+Tier 2 and Tier 3 are already built and measured, not merely planned: ten AI
+cars complete three laps of Interlagos with lap times spread 1:19.6 to 1:30.1
+and no DNFs, so 6 humans + 4 AI, or 1 human + 9 AI, both work today.
+
+**What is not done, and is the honest risk list:**
+
+- Prediction degrades to a 1.97 m p99 correction at 100 ms WAN latency. Fine on
+  a LAN, and the mechanism is fully understood (see above).
+- The renderer and the lobby/HUD in `client/src/scene.ts` and `ui.ts` are
+  Instance A placeholders. They are marked for replacement, not extension.
+- No audio, no visual polish, no trackside geometry. All Instance B.
+- The venue recording (§9) has not been made.
