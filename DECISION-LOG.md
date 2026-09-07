@@ -7,7 +7,20 @@ Newest blockers go at the very top so they are seen first.
 
 ## BLOCKERS
 
-_None._
+**Hour-12 gate re-run under impairment: 3 pass, 2 fail.** Checks 2 (local
+responsiveness) and 4 (contact) fail. Full numbers at the end of this file.
+
+7 scoring for 3 passes: *"drop to 6 players, cut visual scope, spend hours
+12-24 entirely on whichever checks failed. Do not add features."*
+
+**Awaiting your call on dropping to 6 players.** It is one constant
+(`MAX_PLAYERS` in shared/constants.ts) plus an AI fill of 4, and Tier 2 is
+already built and measured. Not changed unilaterally because halving the
+player count is a product decision, not a bug fix.
+
+Also outstanding, found while running the gate: a dropped `ready` packet
+silently benches a player for the whole race - about an 18% chance per
+ten-player race at 2% loss.
 
 ---
 
@@ -236,7 +249,17 @@ interval late, and it is not on the path to the demo, which runs on a LAN (§9).
 
 ---
 
-## HOUR-12 GATE (HANDOFF.md §7)
+## HOUR-12 GATE, FIRST PASS - SUPERSEDED (HANDOFF.md 7)
+
+> **This section is superseded.** It graded checks 1, 2, 4 and 5 without
+> impairment, on the argument that 7 names the 100 ms / 2% condition only
+> for check 3. That argument is withdrawn. The gate was re-run with
+> impairment on all five checks and the result is **3 pass, 2 fail**, not
+> 5/5. See "HOUR-12 GATE, RE-RUN UNDER IMPAIRMENT" at the end of this file.
+>
+> Kept because the unimpaired numbers are still the right baseline for what
+> the demo actually runs on, and because how the grading went wrong is worth
+> remembering.
 
 Run on Interlagos, 2883 m, 6720 collision triangles. Every number below is from
 a harness in `tools/` that can fail; the commands are in README.md. Where a
@@ -331,7 +354,7 @@ hand the pages back. Capping it makes RSS flat **with no cost at all** — 60.00
 and 49.7% headroom either way. That is the proof it was never a leak, and the
 flag is now in the `server` npm script.
 
-### Score: 5 / 5 → continue to full 10-player
+### Score: 5 / 5 → continue to full 10-player  [SUPERSEDED - see the re-run]
 
 §7: *"4–5 pass → continue to full 10-player. You are on track."*
 
@@ -416,3 +439,143 @@ being on.
 
 Neither is deep, and both would have been embarrassing in front of an audience:
 the first one stops the demo dead after the first race.
+
+
+---
+
+## HOUR-12 GATE, RE-RUN UNDER IMPAIRMENT (HANDOFF.md 7)
+
+**All five checks run with 100 ms +/-20 ms latency and 2% packet loss injected
+in both directions.** The earlier gate graded checks 1, 2, 4 and 5 unimpaired,
+on the argument that 7 names the impairment only for check 3. That argument is
+withdrawn. These are the numbers under load and impairment.
+
+Result: **3 pass, 2 fail.** Checks 2 and 4 fail.
+
+Per 7 scoring, "2-3 pass -> drop to 6 players, cut visual scope, spend hours
+12-24 entirely on whichever checks failed. Do not add features."
+
+### 1. Server stability - PASS
+
+Ten real WebSocket clients, each driving with a full AI, all impaired, for ten
+minutes. `node --expose-gc --import tsx tools/loadtest.ts 10 620 interlagos 100 20 0.02`
+
+| | uncapped heap | shipped config (`--max-old-space-size=96`) | required |
+|---|---|---|---|
+| tick rate | 60.00 Hz | 60.00 Hz | 60 Hz |
+| step p50 | 2.92 ms | 1.12 ms | of 16.67 ms |
+| step p99 | 8.97 ms | 3.40 ms | |
+| step max | 19.33 ms | 4.81 ms | |
+| **headroom at p99** | **46.2%** | **79.6%** | >=40% |
+| round trip | 216 ms p50, 257 ms p99 | 216 / 251 ms | |
+
+Passes with margin in both. The one number worth noting is the uncapped step
+max of 19.33 ms, which is over the 16.67 ms budget for a single tick; p99 is
+half the budget, so it is an isolated spike rather than sustained overrun.
+
+### 2. Local responsiveness - FAIL
+
+`npx tsx tools/netcheck.ts 100 20 0.02 120`
+
+| | measured | required |
+|---|---|---|
+| error p50 | 0.001 m | |
+| error p75 / p90 / p95 | 0.001 / 0.808 / 1.379 m | |
+| **error p99** | **1.969 m** | **<1 m** |
+| error max | 1.971 m | |
+| hard snaps | 0 | 0 |
+| corrections in 120 s | 414 | |
+| server input holds | 39, on 0.84% of periods | |
+
+**Fails on prediction error.** The threshold was set before the result was
+known and is not being moved now. Half the story is good - the median error is
+one millimetre, three quarters of snapshots need no correction at all, and
+there is not a single hard snap in two minutes - but at the 99th percentile the
+correction is 1.97 m, and that is roughly four times a second at racing speed.
+
+The cause is understood and documented above: every server input hold costs
+exactly two ticks of travel, and 2% loss delays a recovered input by a
+redundancy interval no matter how the pacing controller is tuned. Unimpaired,
+the same test gives a max error of 0.003 m and zero holds.
+
+### 3. Remote smoothness - PASS
+
+Same run.
+
+| | measured | required |
+|---|---|---|
+| **teleports** | **0** in 30,520 sampled frames | 0 |
+| worst frame | 2.13x the car's reported speed | <3x |
+| stale frames | 0.27% | <5% |
+| buffer depth | 58 snapshots, 52 ms behind newest | |
+
+This is the check 7 explicitly specifies this impairment for, and it passes
+cleanly.
+
+### 4. Contact - FAIL, intermittently
+
+Two ways, and they disagree, which is the finding.
+
+**Controlled, `npx tsx tools/drivetest.ts`** - two cars at 100 km/h with closing
+velocity imposed so contact is guaranteed:
+
+| closing rate | closest gap | worst up.y | max air | verdict |
+|---|---|---|---|---|
+| 1.5 m/s | 1.90 m, touched | 1.00 / 1.00 | 0.00 m | clean |
+| 6.0 m/s | 1.89 m, touched | 1.00 / 1.00 | 0.00 m | clean |
+
+**In-race, four impaired ten-car runs, about 31 minutes of racing:**
+
+| run | worst up.y | greatest height | samples airborne | verdict |
+|---|---|---|---|---|
+| uncapped, 620 s | 0.90 | 0.63 m | 0 | pass |
+| capped, 330 s | **-0.85** | **4.18 m** | **27** | **FAIL** |
+| capped, 330 s | 0.95 | 0.44 m | 0 | pass |
+| capped, 620 s | 0.90 | 0.65 m | 0 | pass |
+
+One run in four put a car **4.18 m in the air and completely inverted**. 7 is
+absolute about this - "neither explodes, falls through the track, or launches
+into the air" - so one launch in four runs is a failure, and picking the three
+good runs would be exactly the generous grading 7 warns about.
+
+Simple side-by-side contact is solid; something rarer and more violent in a
+ten-car field is not. The failing run is not distinguishable by the heap flag:
+two other capped runs passed. Root cause not yet investigated.
+
+### 5. Memory - PASS in the shipped configuration, FAIL without it
+
+Ten impaired clients, ten minutes.
+
+| | uncapped | shipped (`--max-old-space-size=96`) |
+|---|---|---|
+| rss warm-up -> end | 149.2 -> 218.1 MB (**+46.2%**) | 134.8 -> 160.6 MB (+19.2%) |
+| **rss slope, last quarter** | **+25.7%** | **+0.2%** |
+| heapUsed after forced GC | -39.0% | -40.9% |
+| heapTotal | +142.5% | +39.1% |
+| wasm (external + arrayBuffers) | +0.7% / -1.8% | -0.5% / -3.1% |
+| verdict | **FAIL** | **PASS** |
+
+Graded PASS because the `server` npm script ships the cap, so that is the
+configuration that runs. Recorded loudly because anyone starting the server
+without it gets a configuration that fails this check: RSS reaches 218 MB and is
+still climbing at ten minutes.
+
+Post-GC heap falls ~40% and Rapier's WASM memory is flat to within 3% in every
+run, so nothing is leaking in either the JS heap or the physics world. The
+uncapped growth is V8 sizing its heap for the allocation churn, and the cap
+bounds it at no cost - it is in fact *faster*, 79.6% headroom against 46.2%.
+
+### Defect found while running the gate: a dropped `ready` silently benches a player
+
+The ten-minute shipped-config run reported `clients connected 10/10` but
+`cars in room 9`. One client's `ready` message was lost by the 2% simulator, so
+the server never marked it ready, the lobby timer expired, and the race started
+without it. `ready` is sent exactly once, on a click, with no retransmission and
+no acknowledgement.
+
+At the venue this is a player standing next to you who pressed the button and
+never got a race, with nothing on screen to explain it. At 2% loss with ten
+players it is about an 18% chance per race that someone is silently benched.
+
+Not fixed - the instruction for this pass was to run the gate, not to change
+code. It is the highest-value fix on the list.

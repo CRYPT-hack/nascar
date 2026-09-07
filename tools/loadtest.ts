@@ -88,6 +88,14 @@ class SnapshotView implements DrivableView {
   }
 }
 
+export interface Impairment {
+  /** One-way latency in ms, applied in both directions. */
+  lag: number;
+  jitter: number;
+  /** Fraction of messages dropped, in both directions. */
+  loss: number;
+}
+
 class HeadlessClient {
   readonly ws: WebSocket;
   readonly view = new SnapshotView();
@@ -100,10 +108,13 @@ class HeadlessClient {
   private others: V3[] = [];
   private timer: NodeJS.Timeout | null = null;
 
+  dropped = 0;
+
   constructor(
     private readonly index: number,
     q: TrackQuery,
     profile: Float64Array,
+    private readonly sim: Impairment = { lag: 0, jitter: 0, loss: 0 },
   ) {
     this.driver = new AiDriver(q, profile, AI_SKILLS[index % AI_SKILLS.length]!);
     this.ws = new WebSocket(`ws://127.0.0.1:${PORT}`);
@@ -119,13 +130,20 @@ class HeadlessClient {
 
     this.ws.on('message', (raw) => {
       this.bytes += (raw as Buffer).length;
-      let msg: ServerMsg;
-      try {
-        msg = JSON.parse(String(raw)) as ServerMsg;
-      } catch {
+      if (this.drop()) {
+        this.dropped++;
         return;
       }
-      this.onMessage(msg);
+      const text = String(raw);
+      this.delay(() => {
+        let msg: ServerMsg;
+        try {
+          msg = JSON.parse(text) as ServerMsg;
+        } catch {
+          return;
+        }
+        this.onMessage(msg);
+      });
     });
 
     this.ws.on('error', () => {});
@@ -172,8 +190,26 @@ class HeadlessClient {
     }, 1000 / INPUT_HZ);
   }
 
+  private drop(): boolean {
+    return this.sim.loss > 0 && Math.random() < this.sim.loss;
+  }
+
+  private delay(fn: () => void): void {
+    const d = Math.max(0, this.sim.lag + (Math.random() * 2 - 1) * this.sim.jitter);
+    if (d <= 0) fn();
+    else setTimeout(fn, d);
+  }
+
   private send(m: ClientMsg): void {
-    if (this.ws.readyState === 1) this.ws.send(JSON.stringify(m));
+    if (this.ws.readyState !== 1) return;
+    if (this.drop()) {
+      this.dropped++;
+      return;
+    }
+    const text = JSON.stringify(m);
+    this.delay(() => {
+      if (this.ws.readyState === 1) this.ws.send(text);
+    });
   }
 
   close(): void {
@@ -196,6 +232,11 @@ async function main(): Promise<void> {
   const clientCount = Number(process.argv[2] ?? 10);
   const seconds = Number(process.argv[3] ?? 60);
   const trackName = process.argv[4] ?? 'interlagos';
+  const sim: Impairment = {
+    lag: Number(process.argv[5] ?? 0),
+    jitter: Number(process.argv[6] ?? 0),
+    loss: Number(process.argv[7] ?? 0),
+  };
 
   await initPhysics();
   const track = JSON.parse(
@@ -209,11 +250,16 @@ async function main(): Promise<void> {
   const profile = buildSpeedProfile(q);
 
   console.log(`load test: ${clientCount} clients, ${seconds} s, track ${track.name}`);
+  console.log(
+    sim.lag > 0 || sim.loss > 0
+      ? `impairment: ${sim.lag} +/-${sim.jitter} ms latency, ${(sim.loss * 100).toFixed(1)}% loss`
+      : 'impairment: none',
+  );
   console.log(`collision geometry: ${server.room.world.triangles} triangles\n`);
 
   const clients: HeadlessClient[] = [];
   for (let i = 0; i < clientCount; i++) {
-    clients.push(new HeadlessClient(i, q, profile));
+    clients.push(new HeadlessClient(i, q, profile, sim));
     await sleep(60); // stagger, so the joins look like real players arriving
   }
 
@@ -225,6 +271,26 @@ async function main(): Promise<void> {
     external: number;
     arrayBuffers: number;
   }
+  // Gate check 4, measured on the running server rather than on a rig: with ten
+  // impaired clients racing, does any car end up on its roof or in the air.
+  const contact = { worstUp: 1, maxAir: 0, airFrames: 0, samples: 0 };
+  const hints = new Map<number, number>();
+  const sampleContact = (): void => {
+    const room = server.room;
+    if (room.state !== 'racing') return;
+    for (const e of room.entrants.values()) {
+      if (!e.car) continue;
+      contact.samples++;
+      contact.worstUp = Math.min(contact.worstUp, e.car.up().y);
+      const p = e.car.body.translation();
+      const loc = room.world.query.locate(p.x, p.y, p.z, hints.get(e.id));
+      hints.set(e.id, loc.index);
+      const air = p.y - loc.surfaceY - 0.52; // 0.52 m is the settled ride height
+      if (air > contact.maxAir) contact.maxAir = air;
+      if (air > 1.1) contact.airFrames++;
+    }
+  };
+
   const rssSamples: MemSample[] = [];
   const sampleMem = (t: number): MemSample => {
     const m = process.memoryUsage();
@@ -239,6 +305,8 @@ async function main(): Promise<void> {
   };
   const started = Date.now();
   const startTick = server.room.tick;
+
+  const contactSampler = setInterval(sampleContact, 50);
 
   const sampler = setInterval(() => {
     const t = (Date.now() - started) / 1000;
@@ -256,6 +324,7 @@ async function main(): Promise<void> {
 
   await sleep(seconds * 1000);
   clearInterval(sampler);
+  clearInterval(contactSampler);
 
   // RSS alone cannot tell a leak from V8 simply holding on to pages it has
   // already reclaimed internally. If a forced collection is available, take a
@@ -340,6 +409,13 @@ MEMORY (gate check 5)`);
     console.log('  (run with node --expose-gc to separate a leak from retained heap)');
   }
 
+  const totalDropped = clients.reduce((n, c) => n + c.dropped, 0);
+  console.log(`\nCONTACT (gate check 4, ten impaired clients racing)`);
+  console.log(`  samples              ${contact.samples}`);
+  console.log(`  worst attitude       up.y ${contact.worstUp.toFixed(2)}`);
+  console.log(`  greatest height      ${contact.maxAir.toFixed(2)} m above the road`);
+  console.log(`  samples above 1.1 m  ${contact.airFrames}`);
+  console.log(`  messages dropped     ${totalDropped}`);
   console.log('\n--- gate checks ---------------------------------------------');
   const check1 = achievedHz > TICK_HZ * 0.98 && headroom >= 40;
   // Judged on heapUsed after a forced collection, plus the WASM memory, rather
@@ -371,6 +447,11 @@ MEMORY (gate check 5)`);
   const check5 = heapGrowth < 25 && nativeGrowth < 25 && rssSlopePct < 3 && settled.length >= 4;
   console.log(`1. server stability   ${check1 ? 'PASS' : 'FAIL'}  ` +
     `(${achievedHz.toFixed(1)} Hz, ${headroom.toFixed(0)}% headroom at p99; needs >=40%)`);
+  const check4 = contact.samples > 0 && contact.worstUp > 0.2 && contact.airFrames === 0;
+  console.log(
+    `4. contact            ${check4 ? 'PASS' : 'FAIL'}  ` +
+      `(worst up.y ${contact.worstUp.toFixed(2)}, ${contact.airFrames} samples airborne; needs >0.2 and 0)`,
+  );
   console.log(`5. memory flat        ${check5 ? 'PASS' : 'FAIL'}  ` +
     `(heap ${heapGrowth >= 0 ? '+' : ''}${heapGrowth.toFixed(1)}%${afterGc ? ' after forced GC' : ''}, ` +
       `wasm ${nativeGrowth >= 0 ? '+' : ''}${nativeGrowth.toFixed(1)}%, ` +
@@ -380,7 +461,7 @@ MEMORY (gate check 5)`);
 
   for (const c of clients) c.close();
   await server.stop();
-  process.exit(check1 && check5 ? 0 : 1);
+  process.exit(check1 && check4 && check5 ? 0 : 1);
 }
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));

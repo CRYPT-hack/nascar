@@ -406,23 +406,12 @@ async function main(): Promise<void> {
   console.log(`  render lag           ${client.remote.stats.behindMs.toFixed(0)} ms behind newest`);
 
   console.log('\n--- gate checks ---------------------------------------------');
-  // HANDOFF.md 7 specifies the 100 ms / 2% impairment for check 3 (remote cars),
-  // not for check 2. Check 2 asks whether your own car responds without lag or
-  // rubber-banding, which is graded under the conditions the race actually runs
-  // in. Both numbers are printed either way - read them.
-  const impaired = lag >= 50 || loss >= 0.01;
   const check2 = e99 < 1.0 && client.prediction.stats.hardSnaps === 0;
   const check3 = tracked > 0 && totalTeleports === 0 && staleRate < 0.05;
   console.log(
     `2. local responsiveness  ${check2 ? 'PASS' : 'FAIL'}  ` +
       `(p99 error ${f3(e99)} m, ${client.prediction.stats.hardSnaps} hard snaps; needs <1 m and 0)`,
   );
-  if (impaired) {
-    console.log(
-      '   note: 7 specifies this impairment for check 3, not check 2. Grade check 2',
-    );
-    console.log('   from a run at the latency the race will actually be played at.');
-  }
   console.log(
     `3. remote smoothness     ${check3 ? 'PASS' : 'FAIL'}  ` +
       `(${totalTeleports} teleports, ${(staleRate * 100).toFixed(2)}% stale; needs 0 and <5%)`,
