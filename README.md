@@ -40,6 +40,52 @@ npm run dev           # vite on :5173 + game server on :8080
 
 Both bind `0.0.0.0` so players on the venue LAN can join by IP.
 
+`npm run track:build` regenerates both circuits, writes a plan-view SVG next to
+each, and **fails rather than shipping broken geometry** — it checks winding,
+degenerate and NaN vertices, run-off self-overlap, and that the surface query
+agrees with the mesh it was built from.
+
+### Track preview
+
+```bash
+npm run dev   # then open http://localhost:5173/preview.html
+```
+
+Standalone viewer for the track and environment, with no netcode. `L` flies a
+lap from the driver's eye, `G` toggles grid markers, `H` the HUD, `K`/`J` the
+lobby and results screens, `1`/`2` switch circuits. A corner has to be judged at
+eye level at speed — the build SVG will not tell you it arrives blind.
+
+## Track API
+
+`/track` produces the geometry and the queries; `/server` and `/client` both
+consume them. Neither module imports three.js, so the server can use both.
+
+```ts
+import { buildTrackMeshes } from './track/src/mesh';
+import { TrackSampler } from './track/src/sampler';
+
+const meshes = buildTrackMeshes(track);
+// meshes.collision        -> Rapier trimesh (GROUP.TRACK), simplified
+// meshes.barrierCollision -> Rapier trimesh (GROUP.BARRIER)
+// meshes.visual.*         -> per-material geometry, client only
+// meshes.section          -> run-off plan; pass to TrackSampler to share it
+
+const sampler = new TrackSampler(track, meshes.section);
+const q = sampler.query(x, z);
+// q.surface  -> CarSnap.surface        q.u        -> lap fraction, for position
+// q.lateral  -> metres, + is right     q.onTrack  -> false past the barrier
+// sampler.props(q.surface) -> { friction, drag }
+// sampler.poseAt(s)        -> centreline pose, for the AI waypoint follower
+```
+
+`query()` is a single hashed-grid lookup rather than a scan over ~960
+waypoints, so it is safe per car per tick and inside prediction replays.
+
+Both server and client build meshes from the same waypoints instead of loading a
+GLB, which removes the class of bug where server collision and client visuals
+disagree. See DECISION-LOG.md.
+
 ## Conventions
 
 - 1 world unit = 1 metre. Y-up, right-handed. kg / s / N.

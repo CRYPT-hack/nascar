@@ -64,7 +64,7 @@ export interface MeshOptions {
 type V3 = [number, number, number];
 
 /** Orthonormal frame at a waypoint, with banking rolled in. */
-interface Frame {
+export interface Frame {
   p: V3;
   right: V3;
   up: V3;
@@ -76,7 +76,14 @@ interface Frame {
   runoffR: number;
 }
 
-function buildFrames(track: TrackData, plan: SectionPlan): Frame[] {
+/**
+ * Orthonormal frames along the centreline, banking included.
+ *
+ * Exported because trackside scenery has to sit on the same frames as the road
+ * or it leans against it — and because the banking roll is fiddly enough that a
+ * second copy of it would drift.
+ */
+export function buildFrames(track: TrackData, plan: SectionPlan): Frame[] {
   const n = track.waypoints.length;
   const frames: Frame[] = new Array(n);
   let s = 0;

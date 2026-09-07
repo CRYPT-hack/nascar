@@ -13,6 +13,7 @@ import * as THREE from 'three';
 import type { TrackData } from '../../../shared/track-schema';
 import { buildTrackMeshes, type MeshData, type TrackMeshes } from '../../../track/src/mesh';
 import { createSurfaceMaterials, disposeSurfaceMaterials, type SurfaceMaterials } from './materials';
+import { createTrackside } from './trackside';
 
 function toGeometry(m: MeshData): THREE.BufferGeometry {
   const g = new THREE.BufferGeometry();
@@ -64,6 +65,10 @@ export function createTrackView(track: TrackData): TrackView {
   for (const child of root.children) {
     if (child.name === 'barrier') (child as THREE.Mesh).castShadow = true;
   }
+
+  // Decorative only. Never collides — collision comes from meshes.collision,
+  // which excludes all of this by construction (HANDOFF.md §5.3).
+  root.add(createTrackside(track, meshes.section));
 
   return {
     root,
