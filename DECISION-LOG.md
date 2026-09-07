@@ -7,6 +7,23 @@ Newest blockers go at the very top so they are seen first.
 
 ## BLOCKERS
 
+**BLOCKED, needs your decision: Instance B has delivered nothing.**
+There is one branch (`main`), one remote ref, and every commit in the history is
+mine. `assets/` is empty, there are no `.glb` files anywhere on disk, and
+`public/track/` holds only the two circuits generated before the A/B split. So
+there is no Instance B Interlagos to merge, and step 2 of the current plan
+cannot start.
+
+Worth knowing before deciding: the Interlagos already in the repo is not a
+placeholder. It is 2883 m over 960 waypoints with elevation, banking, kerbs,
+grass and gravel run-off and barriers, 6720 collision triangles, and every gate
+run to date has been on it. Ten AI cars complete three laps on it with lap times
+spread 1:19.6 to 1:30.1 and no DNFs. If B never delivers, this *is* the real
+track geometry.
+
+Options: hand me B's work, or say the word and I will run step 3 (the venue
+recording) on the circuit as it stands.
+
 **Hour-20 gate under 100 ms / 2% impairment: 4 pass, 1 accepted deviation.**
 Section at the end of this file. §7 scoring is *continue to full 10-player*,
 and check 4 (contact) passes, so the player count stays at ten.
@@ -761,3 +778,36 @@ same measurement gives 0 holds and a maximum error of 0.003 m.
 
 Recorded rather than quietly re-graded. The threshold was set before any result
 was known and has not been moved.
+
+---
+
+## Join path verified end to end, fresh client
+
+Production build, one process on :8080 serving the client and the game, a
+browser with `localStorage` cleared so nothing was remembered from an earlier
+session. Every step driven through the real UI rather than by script.
+
+| step | result |
+|---|---|
+| fresh load | lobby, empty name field, ten colour swatches |
+| name `  Ayrton <b>  ` | server sanitised it to `Ayrton b` - trimmed, brackets stripped |
+| colour *Acid* clicked | `myColor: 3`, car renders green |
+| Join | `myId: 1`, roster shows `Ayrton b (you) waiting`, HUD reads P1/1 |
+| Ready clicked | button reads **Ready - confirming...** immediately, amber |
+| ~1 s later | **Ready - click to cancel**, roster reads `ready`, server agrees |
+| grid | AI filled to 6, cars placed, HUD P3/6 |
+| countdown, race | ran; driving responded, HUD position tracked to P6/6 |
+| live netcode | peak prediction error 0.002 m, 0 hard snaps, 0% stale frames, 6 cars |
+| results | all five AI classified, winner 1:30.783, the idle human DNF |
+| back to lobby | roster `waiting`, Ready button correctly reset to `Ready` |
+
+The ready handshake is visibly doing its job: the intermediate *confirming*
+state is the client waiting for the server to agree, and it resolves in about a
+second. Before that handshake existed, a lost `ready` packet benched a player
+for the whole race with nothing on screen to explain it.
+
+One cosmetic defect found, left for the polish pass: **on returning to the
+lobby a car stays wherever the race left it**, so a player who ended up in the
+gravel sits in the gravel until the next grid forms. `setState('lobby')` does
+not reposition cars; only `placeOnGrid()` does. It resolves itself at the next
+race and is untidy rather than broken.
