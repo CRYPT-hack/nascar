@@ -7,6 +7,39 @@ Newest blockers go at the very top so they are seen first.
 
 ## BLOCKERS
 
+### 2026-09-07 — BLOCKED: the gate cannot run on this machine as it stands
+
+**Needs you.** Step 2 (re-run the five-check gate on the merged tree) is ready
+to go and the merge itself is verified, but `tools/cpubench.ts` says the machine
+is not fit to be measured on, and the whole point of that tool is that I do not
+grade a gate when it says so.
+
+| run | per ten-car step | verdict |
+|---|---|---|
+| healthy, earlier today | 1.07 - 2.751 ms | fine |
+| first run today | 6.155 ms | over the 4 ms invalidation line |
+| after 100 s idle | **14.365 ms** | worse; a tenth of the machine's throughput |
+| pinned to P-cores, priority High | 7.760 ms | still 3x too slow |
+
+It is not the power plan and it is not core scheduling. Max processor state is
+100% on AC, and pinning the process to the six P-cores at High priority only
+got it to 7.76 ms. The performance counter is the tell: the CPU is delivering
+**82.7% of its base clock** on a part that should be turbo well above it, so it
+is throttling in hardware.
+
+What is running: `RobloxPlayerBeta` (a 3D game, so it holds both the GPU and the
+package hot), Brave, and three `node.exe` processes belonging to **Codex's**
+runtime, not to this project.
+
+**Close Roblox and give the machine a few minutes and I will re-run cpubench and
+then the gate.** I have not killed it — it is your session and your call.
+
+Note that this blocks step 3 as well. The venue recording is ten clients plus a
+browser rendering the field on the same box, which is the heaviest thing this
+project ever does.
+
+---
+
 ### 2026-09-07 — RESOLVED: "Instance B has delivered nothing"
 
 Instance A logged this, and it was accurate when written. Instance B's work
@@ -937,3 +970,101 @@ lobby a car stays wherever the race left it**, so a player who ended up in the
 gravel sits in the gravel until the next grid forms. `setState('lobby')` does
 not reposition cars; only `placeOnGrid()` does. It resolves itself at the next
 race and is untidy rather than broken.
+
+---
+
+## Instance B merged, and what I checked rather than took on trust
+
+B's status document reports the merge as done and the tree as healthy. It is,
+and these are my own numbers rather than a restatement of theirs:
+
+| check | result |
+|---|---|
+| `git pull --ff-only` | clean fast-forward; B had already merged my netcode into their branch |
+| `tsc --noEmit` | clean |
+| `npm test` (race logic) | **33/33** |
+| `vite build` | builds `index.html` and `preview.html` |
+| `git diff ec6f430..HEAD -- shared/ vehicle/ server/ public/track/` | **empty** |
+
+That last row is the one that matters. B changed nothing in `shared/`,
+`vehicle/`, `server/` or the track JSON, so **the physics and the circuit are
+byte-identical to what every gate result in this file was measured against**.
+The gate numbers already recorded still stand; the re-run is to confirm them
+with the render layer and the HUD present, not because anything underneath
+moved.
+
+What the merge adds: the visual track mesh, materials, sky and lighting,
+barriers, trackside scenery, the HUD, and the lobby and results screens.
+
+---
+
+## Car models: taken, wired in, and one bug worth writing down
+
+STATUS-INSTANCE-B.md §3 lists car meshes and liveries as assigned to neither
+instance, and warns that if nobody takes them the cars are placeholder shapes at
+the demo. They were: a box, a wedge for a nose, and four cylinders. Ten glTF
+stock cars were supplied in `models/`, so Instance A has taken this.
+
+`public/cars/` now holds the ten, and `client/src/render/car-model.ts`
+normalises them. They do not arrive usable:
+
+- **forward is +Z**; cars face **-Z** here (HANDOFF.md §5.1), so every model is
+  yawed 180 degrees
+- they are **2.346 m wide** against the collider's 1.9 m. Scaling on width
+  (x0.810) lands the height on 1.088 m against `CAR.height` 1.1 — two of three
+  dimensions on the physics constants from one uniform factor, which is why
+  width is the right datum rather than length
+- the origin sits on the ground, so the model is lowered to put the tyre contact
+  patch where the physics puts it
+
+The wheels are split out of the mesh by which quadrant their triangles sit in,
+so the front pair still steers. They also roll now, driven from how far the car
+moved along its own nose between poses — no netcode plumbing, and `setPose`
+stays the only call site. A snap larger than 2 m is discarded rather than
+spun, because a reconciliation correction is not distance travelled.
+
+**The bug: the pack ships positions only — no normals on any primitive.** A
+`MeshStandardMaterial` with no normals renders pure black, and the first build
+put a black silhouette of a car on the track. Nothing in the console said so;
+the only errors were harmless warnings about missing accessor min/max. I found
+it by running the geometry pipeline outside the browser and printing the
+attribute list on each primitive, which said `attrs=position` nine times.
+Guessing at it from the screenshot would have cost far longer — the symptom
+looks like a lighting or a colour-space problem and is neither.
+
+### Draw calls, because that is the budget
+
+B measured the environment at 17 draw calls and 8.4 ms a frame with an **empty**
+grid. Rendering each car a primitive at a time would have added ninety. Every
+opaque body material in the pack shares metalness 0.12 and roughness 0.52 and
+differs only in colour, so they merge into one vertex-coloured mesh with no
+visual difference whatsoever.
+
+| | measured |
+|---|---|
+| meshes per car | **6** (body, glass, four wheels); 7 for the local car, which carries a marker |
+| triangles per car | ~1,090 |
+| ten cars racing, worst sampled frame | **50 draw calls**, 145,314 triangles |
+| same scene, old box cars | 77 draw calls, 150,358 triangles |
+
+The merge is why damage is not wired up: it discards the four morph targets
+(`FrontImpact` and friends) the pack ships. Nothing asked for damage. Keeping
+the body primitives unmerged is the switch to flip if that changes.
+
+### Verified
+
+- ten liveries render, each keeping its accent and number while its base coat is
+  overridden to the colour the player actually clicked in the lobby
+- remote cars use the same path — checked with a second car alongside on the grid
+- **the fallback works.** With every model returning 404 the client still boots,
+  still joins, and races on the old boxes at 101 km/h. A missing asset must not
+  end the demo, so this is tested rather than asserted.
+
+### Not verified
+
+- **Frame rate.** The browser pane in this session is hidden, and
+  `requestAnimationFrame` is throttled when a tab is not visible — the same trap
+  `netcheck.ts` was written to avoid. Draw calls and triangle counts above are
+  real, because they are counts from the last rendered frame; a frames-per-second
+  number from here would not be. It needs measuring on the venue machine.
+- Ten cars **on a projector**, which is what B tuned the contrast and fog for.

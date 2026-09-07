@@ -6,3 +6,9 @@ dist/
 .env
 .env.local
 recordings/
+
+# Supplied car models: the extracted folders are committed, the archives beside
+# them are byte-identical to those folders, and models/stock_car_pack/ is an
+# exact duplicate of models/original_stock_car_pack/. All three stay on disk.
+models/*.zip
+models/stock_car_pack/

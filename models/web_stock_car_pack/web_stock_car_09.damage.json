@@ -1,0 +1,24 @@
+{
+  "asset": "web_stock_car_09.gltf",
+  "unit": "metres",
+  "forwardAxis": "+Z",
+  "blendShapes": {
+    "FrontImpact": {
+      "index": 0,
+      "collisionZone": "front bumper / hood"
+    },
+    "LeftSideImpact": {
+      "index": 1,
+      "collisionZone": "driver-side doors"
+    },
+    "RightSideImpact": {
+      "index": 2,
+      "collisionZone": "passenger-side doors"
+    },
+    "RearImpact": {
+      "index": 3,
+      "collisionZone": "rear bumper / spoiler"
+    }
+  },
+  "usage": "Set the matching morph-target/blend-shape weight from 0.0 (undamaged) to 1.0 (full damage) after a collision. Keep weights below 0.7 for ordinary impacts; combine side and front/rear weights for corner hits."
+}

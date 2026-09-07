@@ -1,0 +1,116 @@
+{
+  "format": "glTF 2.0",
+  "unit": "metres",
+  "cars": [
+    {
+      "id": "stock_car_01",
+      "model": "web_stock_car_01.gltf",
+      "damage": "web_stock_car_01.damage.json",
+      "morphTargets": [
+        "FrontImpact",
+        "LeftSideImpact",
+        "RightSideImpact",
+        "RearImpact"
+      ]
+    },
+    {
+      "id": "stock_car_02",
+      "model": "web_stock_car_02.gltf",
+      "damage": "web_stock_car_02.damage.json",
+      "morphTargets": [
+        "FrontImpact",
+        "LeftSideImpact",
+        "RightSideImpact",
+        "RearImpact"
+      ]
+    },
+    {
+      "id": "stock_car_03",
+      "model": "web_stock_car_03.gltf",
+      "damage": "web_stock_car_03.damage.json",
+      "morphTargets": [
+        "FrontImpact",
+        "LeftSideImpact",
+        "RightSideImpact",
+        "RearImpact"
+      ]
+    },
+    {
+      "id": "stock_car_04",
+      "model": "web_stock_car_04.gltf",
+      "damage": "web_stock_car_04.damage.json",
+      "morphTargets": [
+        "FrontImpact",
+        "LeftSideImpact",
+        "RightSideImpact",
+        "RearImpact"
+      ]
+    },
+    {
+      "id": "stock_car_05",
+      "model": "web_stock_car_05.gltf",
+      "damage": "web_stock_car_05.damage.json",
+      "morphTargets": [
+        "FrontImpact",
+        "LeftSideImpact",
+        "RightSideImpact",
+        "RearImpact"
+      ]
+    },
+    {
+      "id": "stock_car_06",
+      "model": "web_stock_car_06.gltf",
+      "damage": "web_stock_car_06.damage.json",
+      "morphTargets": [
+        "FrontImpact",
+        "LeftSideImpact",
+        "RightSideImpact",
+        "RearImpact"
+      ]
+    },
+    {
+      "id": "stock_car_07",
+      "model": "web_stock_car_07.gltf",
+      "damage": "web_stock_car_07.damage.json",
+      "morphTargets": [
+        "FrontImpact",
+        "LeftSideImpact",
+        "RightSideImpact",
+        "RearImpact"
+      ]
+    },
+    {
+      "id": "stock_car_08",
+      "model": "web_stock_car_08.gltf",
+      "damage": "web_stock_car_08.damage.json",
+      "morphTargets": [
+        "FrontImpact",
+        "LeftSideImpact",
+        "RightSideImpact",
+        "RearImpact"
+      ]
+    },
+    {
+      "id": "stock_car_09",
+      "model": "web_stock_car_09.gltf",
+      "damage": "web_stock_car_09.damage.json",
+      "morphTargets": [
+        "FrontImpact",
+        "LeftSideImpact",
+        "RightSideImpact",
+        "RearImpact"
+      ]
+    },
+    {
+      "id": "stock_car_10",
+      "model": "web_stock_car_10.gltf",
+      "damage": "web_stock_car_10.damage.json",
+      "morphTargets": [
+        "FrontImpact",
+        "LeftSideImpact",
+        "RightSideImpact",
+        "RearImpact"
+      ]
+    }
+  ]
+}
