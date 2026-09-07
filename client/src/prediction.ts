@@ -16,10 +16,10 @@
  *     gradually. Snapping the rendered car is what rubber-banding actually is.
  */
 
-import { FIXED_DT, MAX_PENDING_INPUTS } from '../../shared/constants';
+import { FIXED_DT, INPUT_HZ, MAX_PENDING_INPUTS } from '../../shared/constants';
 import type { CarInput, CarSnap } from '../../shared/protocol';
 import { Car, type CarState } from '../../vehicle/car';
-import { add, lerpV3, scale, slerp, sub, type Q4, type V3 } from '../../vehicle/math3';
+import { add, clamp, lerpV3, scale, slerp, sub, type Q4, type V3 } from '../../vehicle/math3';
 import type { RaceWorld } from '../../vehicle/world';
 import { TICKS_PER_INPUT } from '../../server/room';
 
@@ -49,6 +49,49 @@ const SMOOTH_TAU = 0.09;
  * its original was lost is applied exactly as if it had never gone missing.
  */
 export const INPUT_REDUNDANCY = 3;
+
+/**
+ * Adaptive input pacing.
+ *
+ * The client and the server each produce and consume one input per two of their
+ * own ticks, on separate clocks. Any rate mismatch drains the server's queue;
+ * when it drains the server holds the previous input for two extra ticks, so
+ * that input is applied four times server-side and twice here. The replay
+ * cannot reproduce it, and the result is a correction of exactly two ticks of
+ * travel - 1.24 m at 133 km/h, 1.77 m at 191 km/h. That constant is what
+ * identified the mechanism.
+ *
+ * The fix is to keep the server's queue at a small target depth, which the
+ * client can do with no protocol change and no RTT estimate.
+ *
+ * `seq - ackSeq` is the number of inputs in flight plus the number sitting in
+ * the server's queue, and the round trip converts the first term into inputs:
+ * `depth = (seq - ackSeq) - rtt * INPUT_HZ`. From there it is an ordinary
+ * proportional controller.
+ *
+ * Deriving the flight term from a running minimum of `seq - ackSeq` instead was
+ * tried and does not work. The minimum only reads the true flight time when the
+ * queue actually empties; when it does not, the floor tracks the gap upward,
+ * the estimated depth collapses toward zero, and the controller speeds up a
+ * client whose queue was already nine deep.
+ *
+ * The correction is applied to how fast real time is consumed. The physics
+ * timestep is untouched: every step is still exactly FIXED_DT, so nothing about
+ * the simulation changes. Only the wall-clock rate at which steps are taken
+ * moves, by a few percent at most, well below anything a player can see.
+ */
+/** Inputs the server should have queued. Roughly 80 ms of cushion. */
+const TARGET_DEPTH = 3;
+/** Pace change per input of depth error, per snapshot. */
+const PACE_GAIN = 0.0006;
+/**
+ * Bound on the pace adjustment either way. Generous: 2% packet loss delays a
+ * recovered input by a redundancy interval, which drains the queue in a way a
+ * few percent cannot refill.
+ */
+const PACE_MAX = 0.09;
+/** Depth is only trusted once a round-trip measurement exists. */
+const MIN_RTT_SAMPLES = 1;
 
 interface Pending {
   seq: number;
@@ -117,6 +160,24 @@ export class PredictedCar {
   };
   private peakDecayAt = 0;
 
+  /** `tick - TICKS_PER_INPUT * ackSeq` on the first snapshot; the baseline. */
+  private driftBase: number | null = null;
+  private lastDrift = 0;
+  private paceBoost = 0;
+  /** Smoothed round trip in ms, supplied by the transport. */
+  private rttMs = 0;
+  private rttSamples = 0;
+  /** Estimated inputs sitting in the server's queue. */
+  queueDepth = 0;
+
+  /**
+   * Multiplier on how fast the client consumes real time. 1 is nominal; above
+   * 1 means run slightly fast to keep the server's input queue fed.
+   */
+  paceScale = 1;
+  /** Server holds observed since connect. Diagnostic. */
+  serverHolds = 0;
+
   constructor(rw: RaceWorld) {
     this.rw = rw;
     this.car = new Car(rw.world);
@@ -124,6 +185,13 @@ export class PredictedCar {
 
   get currentSeq(): number {
     return this.seq;
+  }
+
+  /** Latest round-trip measurement, in ms. Feeds the pacing controller. */
+  setRtt(ms: number): void {
+    if (!Number.isFinite(ms) || ms < 0) return;
+    this.rttMs = this.rttSamples === 0 ? ms : this.rttMs * 0.8 + ms * 0.2;
+    this.rttSamples++;
   }
 
   spawn(p: V3, yaw: number): void {
@@ -162,7 +230,8 @@ export class PredictedCar {
    * Fold the server's answer for this car into the prediction.
    * `snap` is the authoritative state; `ackSeq` is the last input it includes.
    */
-  reconcile(snap: CarSnap, ackSeq: number): void {
+  reconcile(snap: CarSnap, ackSeq: number, serverTick?: number): void {
+    if (serverTick !== undefined) this.updatePacing(serverTick, ackSeq);
     // Everything up to ackSeq is now history.
     while (this.pending.length > 0 && this.pending[0]!.seq <= ackSeq) this.pending.shift();
 
@@ -219,6 +288,34 @@ export class PredictedCar {
     this.posOffset = sub(drawnPos, after.p);
     this.preCorrectionRot = drawnRot;
     this.rotOffset = 1;
+  }
+
+  /**
+   * Track how far the server has fallen behind the input stream and adjust the
+   * pace. See PACE_GAIN.
+   */
+  private updatePacing(serverTick: number, ackSeq: number): void {
+    const raw = serverTick - TICKS_PER_INPUT * ackSeq;
+    if (this.driftBase === null) {
+      this.driftBase = raw;
+      this.lastDrift = 0;
+      return;
+    }
+    const drift = raw - this.driftBase;
+    if (drift > this.lastDrift) {
+      this.serverHolds += Math.round((drift - this.lastDrift) / TICKS_PER_INPUT);
+    }
+    this.lastDrift = drift;
+
+    if (this.rttSamples < MIN_RTT_SAMPLES) return; // no depth estimate yet
+
+    const gap = this.seq - ackSeq;
+    const inFlight = (this.rttMs / 1000) * INPUT_HZ;
+    this.queueDepth = Math.max(0, gap - inFlight);
+
+    const err = TARGET_DEPTH - this.queueDepth;
+    this.paceBoost = clamp(this.paceBoost + err * PACE_GAIN, -PACE_MAX, PACE_MAX);
+    this.paceScale = 1 + this.paceBoost;
   }
 
   /** Decay the visual correction. Call once per rendered frame. */

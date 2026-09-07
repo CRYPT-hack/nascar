@@ -54,6 +54,12 @@ async function main(): Promise<void> {
     hint: number;
     offTrack: number;
     stuck: number;
+    /** Lowest up.y seen. Below ~0.2 the car is on its side or roof. */
+    worstUp: number;
+    /** Greatest height above the track surface, metres. */
+    maxAir: number;
+    /** Frames spent with any wheel-height above a car's own height. */
+    airFrames: number;
   }
 
   const entries: Entry[] = [];
@@ -73,6 +79,9 @@ async function main(): Promise<void> {
       hint: 0,
       offTrack: 0,
       stuck: 0,
+      worstUp: 1,
+      maxAir: 0,
+      airFrames: 0,
     });
   }
 
@@ -114,6 +123,14 @@ async function main(): Promise<void> {
       if (!loc.onTrack) e.offTrack++;
       if (e.car.speed < 1) e.stuck++;
 
+      // Gate check 4, measured in an actual race rather than on a test rig:
+      // cars touch constantly here, and what matters is that none of them ends
+      // up on its roof or in the air as a result.
+      e.worstUp = Math.min(e.worstUp, e.car.up().y);
+      const air = p.y - loc.surfaceY - 0.52; // 0.52 m is the settled ride height
+      if (air > e.maxAir) e.maxAir = air;
+      if (air > 1.1) e.airFrames++;
+
       const ev = e.lt.update(loc, nowMs);
       if (ev) {
         console.log(
@@ -135,11 +152,25 @@ async function main(): Promise<void> {
     const best = e.lt.bestMs;
     console.log(
       `  ${e.name}  laps ${e.lt.lap}  best ${best === null ? '-' : ms(best)}` +
-        `  off-track ${(e.offTrack / tick * 100).toFixed(1)}%` +
-        `  stopped ${(e.stuck / tick * 100).toFixed(1)}%` +
+        `  off-track ${((e.offTrack / tick) * 100).toFixed(1)}%` +
+        `  stopped ${((e.stuck / tick) * 100).toFixed(1)}%` +
+        `  worst up.y ${e.worstUp.toFixed(2)}` +
+        `  max air ${e.maxAir.toFixed(2)} m` +
         `  ${e.finished ? 'finished' : `DNF (missing cp ${e.lt.missing().join(',')})`}`,
     );
   }
+  const worstUp = Math.min(...entries.map((e) => e.worstUp));
+  const maxAir = Math.max(...entries.map((e) => e.maxAir));
+  const airFrames = entries.reduce((n, e) => n + e.airFrames, 0);
+  console.log('\ncontact (gate check 4, measured in-race rather than on a rig)');
+  console.log(
+    `  worst attitude       up.y ${worstUp.toFixed(2)}   ${worstUp > 0.2 ? 'ok' : 'FAIL - a car went over'}`,
+  );
+  console.log(`  greatest height      ${maxAir.toFixed(2)} m above the road`);
+  console.log(
+    `  frames above 1.1 m   ${airFrames}   ${airFrames === 0 ? 'ok' : 'a car got airborne'}`,
+  );
+
   console.log(`\n${simSeconds.toFixed(1)} s simulated in ${tick} ticks`);
   if (done < entries.length) {
     console.log('NOT ALL CARS FINISHED - the track or the AI needs work');

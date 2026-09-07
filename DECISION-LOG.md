@@ -174,3 +174,55 @@ verified anything about Interlagos.
 Also fixed: with ten cars the AI drove the speed profile regardless of what was
 in front of it, and four cars DNF'd in a first-lap pile-up. It now lifts for a
 car directly ahead.
+
+
+### 2026-09-07 — Input pacing: found, fixed, and what did not work
+
+This was the single largest source of prediction error and it is worth the
+space, because three plausible fixes made it worse before the right one worked.
+
+**The mechanism.** The client produces one input per two of its own fixed steps;
+the server consumes one per two of its own ticks. Both are nominally 30 Hz on
+separate clocks. Any rate mismatch drains the server's queue, and when it drains
+the server holds the previous input for two extra ticks — so that input is
+applied four times server-side and twice client-side, and the replay cannot
+reproduce it. The correction is **exactly two ticks of travel, at any speed**:
+1.24 m at 133 km/h, 1.77 m at 191 km/h. That constant ratio is what identified
+it; a random cause would not hold error/speed fixed to three decimal places.
+
+**What did not work, in order:**
+
+1. *Redundant input sends.* Correct and kept — it removes loss-induced gaps for
+   about 7 KB/s upstream and no protocol change — but it does not touch this,
+   because a resent input arrives with the newer one rather than earlier.
+2. *A deeper jitter buffer.* Sweeping the target from 2 to 6 cut starvation from
+   2.0% to 0.5% and left p99 error unchanged at ~1.8 m. That refuted starvation
+   as the dominant cause and was worth the twenty minutes.
+3. *Rebuilding the cushion after every dip.* Actively harmful: holding the
+   current input for several periods while the queue refilled cost more than the
+   starvation it prevented, and was invisible to a metric that only counted an
+   *empty* queue. The metric now counts holds. The cushion is built once.
+4. *Draining an over-deep queue server-side.* Worse still. Consuming two inputs
+   in one period applies one of them for zero ticks while advancing ackSeq, so
+   the client believes it was simulated when it never was. Removed entirely: a
+   queue that grows costs latency, a drained queue costs correctness.
+5. *Estimating queue depth from a running minimum of `seq - ackSeq`.* The
+   minimum only reads true flight time when the queue actually empties. When it
+   does not, the floor tracks the gap upward, the estimate collapses toward
+   zero, and the controller speeds up a client whose queue is already nine deep.
+
+**What worked.** `seq - ackSeq` is inputs in flight plus inputs queued, and the
+measured round trip converts the first term into inputs, so
+`depth = (seq - ackSeq) - rtt * INPUT_HZ`. A proportional controller holds that
+at 3 by adjusting how fast the client consumes real time. The physics timestep
+never changes — every step is still exactly 1/60 — only the wall-clock rate at
+which steps are taken, by a few percent, far below anything a player can see.
+
+Measured at LAN latency after the fix: **0 holds in 1558 periods, prediction
+error max 0.003 m, 2 corrections in 60 s.** Before it, the same run produced
+holds on 2.3% of periods and a 1.97 m p99 correction.
+
+Under 100 ms latency with 2% loss the controller saturates and holds still
+occur on about 1% of periods, leaving a 1.97 m p99 correction with zero hard
+snaps. That residue is a real consequence of a lost input arriving a redundancy
+interval late, and it is not on the path to the demo, which runs on a LAN (§9).

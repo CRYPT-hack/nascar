@@ -197,7 +197,7 @@ class Game {
       return;
     }
 
-    this.prediction.reconcile(mine, msg.ackSeq);
+    this.prediction.reconcile(mine, msg.ackSeq, msg.tick);
   }
 
   // -------------------------------------------------------------------------
@@ -213,7 +213,10 @@ class Game {
     // where they belong *before* the local car is stepped against them.
     this.remote.updateGhosts(now, this.myId);
 
-    this.accumulator += dt;
+    // Pacing: each step is still exactly FIXED_DT of simulation. paceScale only
+    // changes how quickly real time is consumed, so the client keeps the
+    // server's input queue fed. See PredictedCar.paceScale.
+    this.accumulator += dt * this.prediction.paceScale;
     let steps = 0;
     while (this.accumulator >= FIXED_DT && steps < MAX_CATCHUP_STEPS) {
       this.prediction.fixedStep((seq) => this.sampleAndSend(seq));
@@ -223,6 +226,7 @@ class Game {
     if (this.accumulator > FIXED_DT * MAX_CATCHUP_STEPS) this.accumulator = 0;
 
     this.prediction.updateVisual(dt);
+    if (this.conn) this.prediction.setRtt(this.conn.rtt);
     this.draw(now, dt);
   }
 

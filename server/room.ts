@@ -424,15 +424,13 @@ export class Room {
           this.inputHealth.held++;
         }
 
-        // Drain an over-deep queue so a client whose clock runs fast does not
-        // accumulate a growing lag between what it sends and what is simulated.
-        if (e.pending.length > INPUT_BUFFER_TARGET + 4) {
-          const extra = e.pending.shift();
-          if (extra) {
-            e.current = sanitizeInput(extra);
-            e.ackSeq = extra.seq;
-          }
-        }
+        // No draining. Consuming two inputs in one period applies one of them
+        // for zero ticks while still advancing ackSeq, so the client believes
+        // it was simulated when it never was - the same class of divergence a
+        // hold causes, and measurably worse. A queue that grows costs latency;
+        // a drained queue costs correctness. The client's pacing controller is
+        // what keeps the depth in range, and the cap in onInput() is the
+        // backstop against a client that floods.
       }
     }
 
