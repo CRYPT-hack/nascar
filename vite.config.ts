@@ -26,10 +26,10 @@ export default defineConfig({
     target: 'es2022',
     sourcemap: true,
     rollupOptions: {
-      // Listed explicitly because the game's index.html does not exist yet;
-      // without an entry, `vite build` fails outright. Add index.html here
-      // alongside preview.html when the game entry lands.
-      input: { preview: r('./preview.html') },
+      // Both entries listed explicitly. index.html is the game and is what the
+      // demo serves; preview.html is the track/environment viewer. Naming only
+      // one here silently drops the other from `npm run build`.
+      input: { main: r('./index.html'), preview: r('./preview.html') },
     },
   },
   optimizeDeps: {

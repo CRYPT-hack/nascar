@@ -37,6 +37,28 @@ export interface InputMsg {
   handbrake: boolean;
 }
 
+/**
+ * A batch of recent inputs, oldest first.
+ *
+ * Redundancy against packet loss: each input is carried in this many
+ * consecutive packets, so losing any one packet still delivers it. Sending the
+ * same three inputs as three separate `input` messages achieves the identical
+ * redundancy - each input still appears in three packets - but at three times
+ * the packet count, which is pure overhead at 30 Hz per client.
+ *
+ * The server ignores any seq it has already seen, so a duplicate that arrives
+ * after its original costs nothing, and one that arrives after its original was
+ * lost is applied exactly as if it had never gone missing.
+ *
+ * `input` is unchanged and still accepted; this is an addition, not a
+ * modification. See CHANGELOG-SHARED.md.
+ */
+export interface InputBatchMsg {
+  t: 'inputs';
+  /** Oldest first. The server applies any seq above the highest it has seen. */
+  a: Omit<InputMsg, 't'>[];
+}
+
 /** Player signals readiness in the lobby. */
 export interface ReadyMsg {
   t: 'ready';
@@ -49,7 +71,7 @@ export interface PingMsg {
   ts: number; // client clock, ms
 }
 
-export type ClientMsg = HelloMsg | InputMsg | ReadyMsg | PingMsg;
+export type ClientMsg = HelloMsg | InputMsg | InputBatchMsg | ReadyMsg | PingMsg;
 
 // ---------------------------------------------------------------------------
 // Server -> client

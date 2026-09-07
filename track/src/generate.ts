@@ -99,11 +99,18 @@ export function generateTrack(spec: CircuitSpec): GenerateResult {
   const loop = rot(pts);
   const heights = rot(rawHeights);
   const widths = rot(rawWidths);
-  // Negated: positive curvature has its apex on the right (see section.ts for
-  // the measured convention), and positive banking raises the right-hand side.
-  // Banking a right-hand corner with the right side up is off-camber — it
-  // throws the car off the road instead of holding it on.
-  const banks = rot(curv).map((k) => clamp(-k * BANK_GAIN, -MAX_BANK, MAX_BANK));
+  // Positive curvature has its apex on the right (measured; see section.ts),
+  // and positive banking LOWERS the right-hand edge (see CHANGELOG-SHARED.md
+  // 2026-09-07T21:05Z). So `+k` lowers the inside of a right-hand corner, which
+  // is correct camber.
+  //
+  // Do not "fix" this sign without reading that changelog entry. It was flipped
+  // once on the reasoning that positive banking raises the right edge — true of
+  // the renderer's own frame at the time, but the opposite of what the physics
+  // builder in vehicle/track-collision.ts does, and the physics is what the car
+  // drives on. Ten of ten AI cars finished before that change and two of ten
+  // after it.
+  const banks = rot(curv).map((k) => clamp(k * BANK_GAIN, -MAX_BANK, MAX_BANK));
 
   // --- 4. Build waypoints in the authoring frame ---------------------------
   const wps: Waypoint[] = loop.map((p, i) => ({

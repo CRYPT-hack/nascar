@@ -3,16 +3,19 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "dev": "npm-run-all --parallel dev:server dev:client",
     "dev:client": "vite",
-    "dev:server": "tsx watch server/index.ts",
-    "server": "tsx server/index.ts",
+    "dev:server": "node --max-old-space-size=96 --import tsx --watch server/index.ts",
+    "server": "node --max-old-space-size=96 --import tsx server/index.ts",
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
     "track:build": "tsx track/src/build.ts",
-    "loadtest": "tsx tools/loadtest.ts"
+    "loadtest": "tsx tools/loadtest.ts",
+    "test": "tsx tools/roomtest.ts"
   },
   "dependencies": {
     "@dimforge/rapier3d-compat": "0.14.0",

@@ -3,38 +3,26 @@
 Scope is HANDOFF.md §4: `/track/`, `/assets/`, and the visual/HUD parts of
 `/client/`. Instance A owns `/vehicle/`, `/server/`, and prediction/interpolation.
 
-Last updated 2026-09-07. Written by Instance B.
+Last updated 2026-09-07, after merging with Instance A's work.
 
 ---
 
-## 1. BLOCKER — nothing has reached GitHub
+## 1. Current state
 
-**8 commits are sitting on local `main`. None of them are pushed.**
+Push access was granted, and Instance B's 8 commits are merged with Instance A's
+16. **The tree builds, all of A's tests pass, and the physics is byte-identical
+to what A's gates were run against.**
 
-The `gh` CLI on this machine is authenticated as `kartikeyBishnoi`, which has
-read-only access to `CRYPT-hack/nascar`:
+| Check | Result |
+|---|---|
+| `npm test` (A's race logic) | 33/33 pass |
+| `npm run track:build` geometry checks | pass, both circuits |
+| `tsc --noEmit` | clean |
+| `vite build` | builds `index.html` **and** `preview.html` |
+| `tools/laptest.ts interlagos 10 3` | 10/10 finish, identical lap times to A's baseline |
+| `public/track/*.json` vs `origin/main` | byte-identical |
 
-```
-$ gh api repos/CRYPT-hack/nascar --jq .permissions
-{"admin":false,"maintain":false,"pull":true,"triage":false,"push":false}
-
-$ git push origin main
-remote: Permission to CRYPT-hack/nascar.git denied to kartikeyBishnoi.
-fatal: ... 403
-```
-
-Needs one of:
-
-1. add `kartikeyBishnoi` as a collaborator with **write** access, or
-2. re-authenticate `gh` as the `CRYPT-hack` account (`gh auth login`), or
-3. say so, and I will push to a fork under `kartikeyBishnoi` and open a PR.
-
-A repo-local credential helper (`credential.helper = !gh auth git-credential`)
-is already configured, so a push will succeed the moment permissions change.
-Global git config was not touched.
-
-**Consequence:** Instance A cannot see any track work — including the mesh and
-sampler API its server needs, and the banking sign correction.
+There is no open blocker.
 
 ---
 
@@ -48,196 +36,136 @@ sampler API its server needs, and the banking sign correction.
 | Interlagos centreline, widths, elevation, banking | done |
 | Surface types (asphalt / kerb / grass / gravel) with friction tags | done |
 | Skybox, barriers, run-off areas, basic trackside geometry | done |
-| HUD: position, lap counter, lap time, speed, draft indicator | done |
-| Lobby / results screen | done |
+| HUD: position, lap counter, lap time, speed, draft indicator | done, **not yet wired into the game** |
+| Lobby / results screen | done, **not yet wired into the game** |
 
-### §6 hour-by-hour plan
+### Numbers
 
-Every Instance B row is complete except the last, which is the push blocker:
+Interlagos: 2883.3 m lap, 12.5 m minimum width, 20.7 m minimum radius, 8.5 %
+maximum gradient, 0 self-crossings. Collision 4800 tris against 13442 visual.
 
-| Hour | Task | State |
-|---|---|---|
-| 0–1 | Read `/shared/`, confirm schema, scaffold `/track/` | done |
-| 1–3 | Waypoints → ribbon mesh + collision trimesh | done |
-| 3–5 | Placeholder oval in the real schema | done |
-| 5–7 | Interlagos centreline, corners approximated | done |
-| 7–9 | Elevation, surface tagging, barriers | done |
-| 9–11 | Kerbs, run-off, basic HUD | done |
-| 11–12 | Hand the first real Interlagos JSON to A | **blocked on §1** |
-
-### Current numbers
-
-Interlagos, from `npm run track:build`:
-
-```
-lap length     2883.3 m       min width      12.5 m
-min radius     20.7 m         max gradient   8.5%
-elevation      -26.99 .. 0.93 m
-self-crossings 0              min clearance  86.5 m
-collision      4800 tris (0.357 of visual)
-barriers       1920 tris      visual         13442 tris
-gravel run-off 11.7% of edges
-sampler error  0 m lateral, 0 m height
-```
-
-Rendering, measured in the browser: **148k triangles, 17 draw calls, 8.4 ms
-median frame** on Interlagos (7.1 ms on the oval). Scenery is ~1400 trees,
-~1900 spectators in stands, ~1000 along the barriers, all instanced.
+Rendering: **148k triangles, 17 draw calls, 8.4 ms median frame** (7.1 ms on the
+oval). Scenery is ~1400 trees, ~1900 spectators in stands, ~1000 along the
+barriers, ~66 tyre stacks — all instanced, all decorative, none colliding.
 
 ### Files
 
 ```
-track/src/    spline circuits generate mesh section sampler checks build
-client/src/render/   scene materials track-view trackside scenery rng
-client/src/hud/      hud screens hud.css
-client/src/preview.ts
-preview.html
+track/src/          spline circuits generate mesh section sampler checks build
+client/src/render/  scene materials track-view trackside scenery rng
+client/src/hud/     hud screens hud.css
+client/src/preview.ts + preview.html      standalone track/environment viewer
 ```
 
-~4700 lines. `/shared/` is **untouched** — verified with
-`git diff c20d45d HEAD -- shared/`, which is empty.
+`/shared/` has no Instance B edits. Two semantic clarifications were appended to
+CHANGELOG-SHARED.md; neither changes a field, type or wire shape.
 
 ---
 
-## 3. What Instance A needs to know
+## 3. Left to do
 
-### 3.1 The track API
+### Integration with Instance A — the main remaining work
 
-`track/src/mesh.ts` and `track/src/sampler.ts`. Neither imports three.js, so the
-server can use both.
+A's README says: *"`client/src/scene.ts` and `client/src/ui.ts` are placeholders
+marked for replacement, not extension."* That replacement has **not happened
+yet**. Right now the game entry (`index.html` → `client/src/main.ts`) still uses
+A's placeholders, and everything in §2 above is only reachable through
+`/preview.html`.
 
-```ts
-import { buildTrackMeshes } from '../track/src/mesh';
-import { TrackSampler }     from '../track/src/sampler';
+Concretely:
 
-const meshes = buildTrackMeshes(track);
-// meshes.collision         -> Rapier trimesh, GROUP.TRACK    (4800 tris)
-// meshes.barrierCollision  -> Rapier trimesh, GROUP.BARRIER  (1920 tris)
-// meshes.visual.*          -> per-material geometry, client only
-// meshes.section           -> run-off plan; pass to TrackSampler to share it
+1. Point `main.ts` at `client/src/render/` instead of `client/src/scene.ts`,
+   so the game gets the materials, sky, trackside and scenery.
+2. Replace `client/src/ui.ts` with `client/src/hud/`, driving `hud.update()`
+   from the snapshot stream and `screens.showLobby()/showResults()` from the
+   `join`/`roster`/`result` messages.
+3. Reconcile the cross-section constants (below) so the visible road sits on the
+   colliders.
 
-const sampler = new TrackSampler(track, meshes.section);
-const q = sampler.query(car.x, car.z);
-// q.surface  -> straight into CarSnap.surface
-// q.u        -> lap fraction 0..1, for race position ordering
-// q.lateral  -> signed metres from centreline, + is right
-// q.onTrack  -> false once past the barrier line
-// sampler.props(q.surface) -> { friction, drag } from the track's own table
-// sampler.poseAt(s)        -> centreline pose, for the Tier 2 AI follower (§8)
-```
+This is the difference between "the visuals exist" and "the visuals are in the
+game", and it is the single highest-value thing left in my scope.
 
-`query()` is a single hashed-grid cell lookup, not a scan over ~960 waypoints —
-safe per car per tick and inside prediction replays.
+### Cross-section constants disagree
 
-### 3.2 Banking values changed sign — re-read the track JSON
+`vehicle/track-collision.ts` and `track/src/section.ts` independently define the
+same cross-section and differ: kerb 1.2 m vs 1.1 m, run-off 9 m vs 14 m (mine
+variable per side), barrier 1.3 m vs 1.2 m.
 
-`spline.ts` takes its cross product over `(x, z)`, which reverses the usual
-reading once embedded in a Y-up frame: **positive curvature has its apex on the
-right, not the left.** Every corner was banked inside-up, i.e. off-camber.
-
-Fixed; 0 of 330 corners are now off-camber. The schema and its documented
-meaning are unchanged (`positive = banked right`) — only the generated values
-moved. **If you already read `banking`, read it again.**
-
-### 3.3 Things left deliberately for A
-
-- `index.html` and `client/src/main.ts` do not exist. I did not create them so as
-  not to squat on the game entry. `vite build` currently points at
-  `preview.html`; add `index.html` alongside it in `vite.config.ts` when the game
-  entry lands.
-- The HUD and screens own **no** race logic. Call `hud.update(state)` per frame
-  with a plain `HudState`, and `screens.showLobby()` / `showResults()` on the
-  matching server messages. The race state machine stays entirely yours.
-- `drafting` on `HudState` is rendered but never computed — that is a physics
-  question, so it is your call to set.
-
----
-
-## 4. Left to do
-
-### Blocked
-
-- **Push access** (§1). Everything else below is downstream of this.
-- Hand the Interlagos JSON to A and confirm the server builds a Rapier world
-  from `meshes.collision`. Cannot be done until A has the code.
+Proposal, unless A objects: **A's numbers win** — they are baked into a
+gate-passing physics build — and `section.ts` changes to match. The discrepancy
+is at the edges, not under the racing line, so it is not urgent, but it is the
+"visibly on asphalt, grass friction" class of bug.
 
 ### Not started, in my scope
 
 | Item | Notes |
 |---|---|
-| Audio | `/assets/` is mine per §4, but audio is not in the §4 bullet list. Engine/tyre/ambient sound is unclaimed by either instance. Flagging rather than assuming. |
-| Car visuals and liveries | Ownership ambiguous — see §5. |
-
-### Needs A before it can be finished
-
-- Wiring HUD/screens into the real game entry and driving them from snapshots.
-- Verifying the HUD against real lap and position data. It has only ever been
-  driven by the preview fly-through.
+| Audio | `/assets/` is mine per §4, but audio is in neither the §4 bullets nor the §6 plan. Unclaimed by either instance. A silent racing game demos noticeably worse. |
+| Car visuals and liveries | Ownership ambiguous. A owns `/vehicle/` physics; car *meshes and liveries* are assigned to nobody. `CAR_COLORS` already sits in `/shared/`. If nobody takes it, the cars are placeholder shapes at the demo. |
 
 ### Deliberately not built
 
-- GLB export pipeline — meshes are procedural on both sides by design
-  (DECISION-LOG). Nothing needs it.
+- GLB pipeline — meshes are procedural on both sides by design.
 - Minimap — not in the §4 HUD list. `sampler.query().u` makes it cheap if wanted.
-- Catch fencing above the barriers — characteristic, but needs transparency
-  sorting for marginal gain.
+- Catch fencing above the barriers — needs transparency sorting for marginal gain.
 
 ---
 
-## 5. Open questions (only the human can settle)
-
-1. **Who renders the cars?** §4 gives A `/vehicle/` and gives me "the visual
-   parts of `/client/`". Car *physics* is clearly A's; car *meshes and liveries*
-   are not assigned. `CAR_COLORS` already sits in `/shared/`. If nobody claims
-   this, the cars will be untextured boxes at the demo. I can take it — say the
-   word.
-2. **Is audio in scope at all?** It is not in the §4 bullets and not in the §6
-   plan. A silent racing game demos noticeably worse.
-
----
-
-## 6. What is verified, and what is not
-
-Being explicit, because §7 warns that a generous self-grade costs the demo.
+## 4. What is verified, and what is not
 
 **Verified:**
 
-- `npm run track:build` passes all geometry checks on both circuits, and
-  **fails the build** rather than shipping bad geometry. It checks winding,
-  degenerate and NaN vertices, index bounds, run-off self-overlap, that
-  collision is simpler than visual, and that the sampler agrees with the mesh
-  it was built from (0 m lateral and height error).
-- `tsc --noEmit` clean; `vite build` succeeds.
-- Renders in-browser: 17 draw calls, 148k tris, 8.4 ms median frame.
+- Everything in the table in §1.
+- `track:build` **fails** rather than shipping bad geometry: winding, degenerate
+  and NaN vertices, index bounds, run-off self-overlap, collision simpler than
+  visual, and sampler/mesh agreement (0 m lateral and height error).
+- The renderer's banking now matches the physics builder's to **0.07 mm** of
+  road-edge height, cross-checked against `frameAt()` across the circuit.
 - 0 trees or spectators inside the barrier line, checked against the sampler.
-- HUD values, lobby roster and results table read correctly from the DOM;
-  no panel overlap at 664 px wide.
+- HUD values, lobby roster and results table read correctly from the DOM.
 - Both circuits load, switch and rebuild scenery without error.
 
 **Not verified:**
 
-- Never run against a real server, real snapshots, or any netcode. None exists yet.
-- Never tested in Safari. §9 warns its WebGL and audio differ enough to bite.
+- The HUD has never been driven by real snapshots — only by the preview
+  fly-through. Positions, lap times and the draft flag are untested against the
+  server.
+- The render layer has never run with ten cars in the scene. The 8.4 ms frame
+  budget was measured with an empty grid; A's cars and physics go on top.
+- Never tested in Safari (§9 warns its WebGL and audio differ).
 - Never tested on a projector, which is what the contrast and fog were tuned for.
-- No load test, and no test with 10 cars in the scene — the 8.4 ms frame budget
-  has not been measured with A's cars and physics on top.
 - Frame timings are from this machine only.
 
 ---
 
-## 7. Two bugs worth remembering
+## 5. The mistake worth keeping
 
-Both were found by measuring output, not by reading code.
+I flipped the generator's banking sign, believing every corner was banked
+off-camber. It was not, and the flip put **eight of ten AI cars off the road**.
 
-**The fold check agreed with the bug.** My first run-off fold check re-derived
-"which side is the inside" the same way `section.ts` did. When that convention
-turned out to be backwards, the check inherited the same mistake and passed.
-What caught it was the *winding* check, which measures the built triangles
-instead of re-deriving intent. The fold check now measures whether the barrier
-line actually advances along the lap, and shares no assumption with the code it
-validates.
+`Waypoint.banking` is documented as "positive = banked right", which never says
+which way the surface tilts. `vehicle/track-collision.ts` rolls the frame one
+way and `track/src/mesh.ts` rolled it the other. Each half was internally
+consistent, so the generator plus the physics builder had been producing correct
+camber all along — only the *rendered* road leaned wrong. I read the renderer's
+convention, concluded the generator was wrong, and changed the wrong thing.
 
-**The entire crowd was invisible.** All 1898 spectators and the seating deck
-were positioned inside the grandstand's 9 m solid substructure. Nothing in the
-type system or the tests could catch it; it took a screenshot. Worth keeping in
-mind for the rest of the visual work — look at it, do not reason about it.
+| | before | after the flip |
+|---|---|---|
+| finishers | 10 / 10 | 2 / 10 |
+| off-track | 0.0–2.3 % | 65–90 % |
+
+Reverted; the renderer was changed to match the physics instead, and the
+convention is now written down in CHANGELOG-SHARED.md.
+
+Two things to carry forward. **Reasoning about a sign convention from one side of
+a boundary is not evidence about the system** — both readings looked right in
+isolation, and only running the car settled it. And **the check that caught it
+was behavioural**, ten cars driving three laps, not a geometry assertion. My
+build-time geometry checks passed happily throughout, because the geometry was
+internally consistent the whole time. They could not have caught this, and no
+stricter version of them would have.
+
+This is the second time a convention error in this area cost real time — the
+first put the run-off fold check in agreement with the bug it was meant to
+catch. Both were caught by measuring behaviour, never by reading code.

@@ -184,7 +184,9 @@ export class TrackSampler {
       u: s / this.lapLength,
       lateral,
       surface: surfaceAt(lateral, width, runoffKind),
-      groundY: centreY + lateral * Math.sin(banking) + sectionRise(lateral, width, runoffWidth),
+      // Negated to match the banking convention: positive banking lowers the
+      // right-hand edge. See mesh.ts buildFrames and CHANGELOG-SHARED.md.
+      groundY: centreY - lateral * Math.sin(banking) + sectionRise(lateral, width, runoffWidth),
       width,
       onTrack: Math.abs(lateral) <= outerHalfWidth(width, runoffWidth),
     };

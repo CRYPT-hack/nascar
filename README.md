@@ -22,23 +22,74 @@ from a minor bump produces bugs that look like netcode bugs.
 
 ```
 shared/     Contract: constants, protocol, track schema. Frozen — see CHANGELOG-SHARED.md
-server/     Authoritative simulation + room management
-client/     three.js rendering, input, prediction, camera, HUD
-vehicle/    Car physics, shared by server and client
+server/     Authoritative simulation, race state machine, WebSocket transport
+client/     Prediction, interpolation, input, camera, placeholder renderer and UI
+vehicle/    Car physics, collision geometry, track queries, AI driver
 track/      Track generator (source); output lands in public/track/
 public/     Static assets served by Vite; generated track JSON
-tools/      Load test harness and dev utilities
+tools/      Measurement harnesses — see below
 ```
+
+Instance A owns `vehicle/`, `server/`, and the netcode half of `client/`.
+Instance B owns `track/`, `assets/`, and presentation. `client/src/scene.ts` and
+`client/src/ui.ts` are placeholders marked for replacement, not extension.
 
 ## Running
 
 ```bash
 npm install
-npm run track:build   # generates public/track/*.json
+npm run track:build   # generates public/track/*.json and review SVGs
 npm run dev           # vite on :5173 + game server on :8080
 ```
 
-Both bind `0.0.0.0` so players on the venue LAN can join by IP.
+Both bind `0.0.0.0` so players on the venue LAN can join by IP. For the demo,
+`npm run build` then `npm run server` serves the built client and the track JSON
+from the game server itself — one process, one port, one URL to type (§9).
+
+Server environment: `PORT`, `TRACK`, `LAPS`, `AI_FILL` (fill the grid with AI).
+
+The `server` script passes `--max-old-space-size=96`. Without it V8 grows its
+heap to absorb snapshot serialisation and RSS climbs to ~167 MB before
+asymptoting; with it RSS is flat at ~138 MB, and the tick rate and CPU headroom
+are identical either way. See the hour-12 gate in DECISION-LOG.md.
+
+Client query parameters: `?track=oval`, `?server=ws://host:8080`, and the
+network simulator `?lag=100&jitter=20&loss=0.02`. **F3** toggles the netcode
+overlay.
+
+## Measurement
+
+Nothing here asserts; everything prints numbers you are expected to read. The
+hour-12 gate (HANDOFF.md §7) is graded from these.
+
+```bash
+npx tsx tools/cpubench.ts                  # is this machine fast enough to trust a gate run
+npm test                                   # race logic: lobby, grid entry, laps, standings
+npx tsx tools/drivetest.ts interlagos      # vehicle: accel, braking, grip, drop, contact
+npx tsx tools/laptest.ts interlagos 10 3   # 10 AI cars, 3 laps: is the track drivable
+npx tsx tools/loadtest.ts 10 600           # gate 1 and 5: tick rate, headroom, memory
+npx tsx tools/netcheck.ts 100 20 0.02 90   # gate 2 and 3: prediction error, smoothness
+```
+
+`npm test` is the fast one (~40 s) and the one to run after any change to
+`server/room.ts`. It drives a `Room` through its state machine with no sockets
+and asserts the rules that decide whether ten strangers actually get a race.
+
+**Run `cpubench.ts` before any gate run.** It times one fixed workload - 6000
+ten-car simulation steps - and prints the cost per step against the 16.67 ms
+budget. If it does not read close to 1 ms, the machine is throttling and every
+timing-sensitive result is worthless. This was learned the hard way: a mid-session
+slowdown to 14.7 ms per step made the server look like it had lost 40% of its CPU
+headroom and the netcode look broken, when neither had changed.
+
+`netcheck` takes `lagMs jitterMs loss seconds` and runs the real client modules
+against the real server over a real socket. It prints the server's achieved tick
+rate first, derived from the ticks stamped on the snapshots it receives, and
+marks everything below it invalid when that is not 60 Hz - because it hosts the
+server in its own process and a client under load will starve it. Set
+`NETCHECK_ATTACH=ws://host:port` to measure against a server running elsewhere. It cannot be run in a browser:
+`requestAnimationFrame` is throttled when the tab is hidden, so an automated
+browser session measures the harness rather than the netcode.
 
 `npm run track:build` regenerates both circuits, writes a plan-view SVG next to
 each, and **fails rather than shipping broken geometry** — it checks winding,
@@ -92,3 +143,18 @@ disagree. See DECISION-LOG.md.
 - Fixed timestep 1/60 s everywhere. Never variable.
 - Rotations are quaternions `[x, y, z, w]` on the wire, never Euler.
 - Cars spawn facing −Z; the start/finish line faces −Z.
+- **Positive `steer` turns right.** The single conversion to the physical wheel
+  angle (positive left) lives in `Car.step()`. Do not add a second one.
+- One client input covers exactly `TICKS_PER_INPUT` (2) server ticks. Client
+  prediction must replay each input for the same count or the local car drifts
+  from the server by a constant factor.
+
+## When something looks like a netcode bug
+
+Check these first, in order (§10):
+
+1. Rapier is the same exact version on both sides — it is pinned, but check.
+2. Both sides are stepping at `FIXED_DT`, never a variable dt.
+3. Both built their world through `createRaceWorld()`.
+4. Run `tools/netcheck.ts` with zero lag and zero loss. If prediction error is
+   not ~0.001 m there, the problem is not the network.

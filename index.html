@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Interlagos</title>
+    <style>
+      /* Placeholder styling. Instance B owns presentation. */
+      :root {
+        color-scheme: dark;
+        --ink: #e8eef8;
+        --dim: #93a3bb;
+        --panel: rgba(10, 14, 22, 0.88);
+        --line: rgba(120, 160, 220, 0.24);
+      }
+      * { box-sizing: border-box; }
+      html, body { height: 100%; margin: 0; background: #0b0f18; color: var(--ink); }
+      body {
+        font: 14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        overflow: hidden;
+      }
+      #view { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+
+      #boot {
+        position: fixed; inset: 0; display: grid; place-items: center;
+        padding: 24px; text-align: center; color: var(--dim); white-space: pre-wrap;
+        pointer-events: none;
+      }
+
+      .panel {
+        position: fixed; z-index: 20;
+        background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+        padding: 22px 24px; backdrop-filter: blur(8px);
+      }
+      .lobby {
+        left: 50%; top: 50%; transform: translate(-50%, -50%);
+        width: min(420px, calc(100vw - 32px)); text-align: center;
+      }
+      .lobby h1 { margin: 0 0 4px; font-size: 30px; letter-spacing: -0.02em; }
+      .lobby .sub { margin: 0 0 18px; color: var(--dim); font-size: 13px; }
+      .lobby input {
+        width: 100%; padding: 10px 12px; margin-bottom: 14px;
+        background: rgba(255,255,255,0.05); color: var(--ink);
+        border: 1px solid var(--line); border-radius: 8px; font: inherit;
+      }
+      .swatches { display: flex; gap: 8px; justify-content: center; margin-bottom: 18px; flex-wrap: wrap; }
+      .swatch {
+        width: 28px; height: 28px; border-radius: 50%; cursor: pointer;
+        border: 2px solid transparent; padding: 0;
+      }
+      .swatch.on { border-color: #fff; box-shadow: 0 0 0 3px rgba(255,255,255,0.18); }
+      button.primary, button.ready {
+        width: 100%; padding: 11px 16px; cursor: pointer; font: inherit; font-weight: 600;
+        color: #08121f; background: #7fd4ff; border: 0; border-radius: 8px;
+      }
+      button.ready { margin-top: 12px; background: #a8f0b6; }
+      button.ready.pending { background: #f0e0a8; }
+
+      .roster {
+        position: fixed; z-index: 20; right: 14px; top: 14px;
+        width: 250px; padding: 12px 14px;
+        background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+      }
+      .roster-head { font-size: 12px; color: var(--dim); margin-bottom: 8px; }
+      .roster-row, .results .row { display: flex; align-items: center; gap: 8px; padding: 3px 0; font-size: 13px; }
+      .dot { width: 10px; height: 10px; border-radius: 50%; flex: 0 0 auto; }
+      .nm { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .st { color: var(--dim); font-size: 12px; flex: 0 0 auto; }
+
+      .banner {
+        position: fixed; z-index: 25; left: 50%; top: 16%; transform: translateX(-50%);
+        font-size: 42px; font-weight: 700; letter-spacing: -0.02em;
+        text-shadow: 0 3px 24px rgba(0,0,0,0.6); pointer-events: none;
+      }
+
+      .hud {
+        position: fixed; z-index: 20; left: 16px; bottom: 16px;
+        font-variant-numeric: tabular-nums; text-shadow: 0 2px 10px rgba(0,0,0,0.7);
+      }
+      .hud .pos { font-size: 26px; font-weight: 700; color: #7fd4ff; }
+      .hud .speed { font-size: 34px; font-weight: 700; }
+      .hud .lap { font-size: 14px; color: var(--dim); }
+
+      .results {
+        left: 50%; top: 50%; transform: translate(-50%, -50%);
+        width: min(560px, calc(100vw - 32px));
+      }
+      .results h2 { margin: 0 0 12px; font-size: 20px; }
+      .results .pos { width: 22px; color: var(--dim); font-variant-numeric: tabular-nums; }
+      .results .row.me { color: #7fd4ff; }
+    </style>
+  </head>
+  <body>
+    <canvas id="view"></canvas>
+    <div id="boot">loading…</div>
+    <script type="module" src="/client/src/main.ts"></script>
+  </body>
+</html>

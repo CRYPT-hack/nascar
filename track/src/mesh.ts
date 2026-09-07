@@ -116,10 +116,16 @@ export function buildFrames(track: TrackData, plan: SectionPlan): Frame[] {
     const uy = rz * fx - rx * fz;
     const uz = rx * fy - ry * fx;
 
-    // Roll the frame by the banking angle about the forward axis. Positive
-    // banking raises the right-hand side (shared/track-schema.ts).
+    // Roll the frame by the banking angle about the forward axis.
+    //
+    // Positive banking LOWERS the right-hand edge. The sine is negated because
+    // `up` here is right x forward, whereas vehicle/track-collision.ts rolls
+    // about forward x right — the opposite sense. The physics builder defines
+    // the convention, because the car drives on its surface; this renderer has
+    // to match it or the visible road leans one way while the surface under the
+    // wheels leans the other. See CHANGELOG-SHARED.md 2026-09-07T21:05Z.
     const cb = Math.cos(w.banking);
-    const sb = Math.sin(w.banking);
+    const sb = -Math.sin(w.banking);
     const right: V3 = [rx * cb + ux * sb, ry * cb + uy * sb, rz * cb + uz * sb];
     const up: V3 = [ux * cb - rx * sb, uy * cb - ry * sb, uz * cb - rz * sb];
 
