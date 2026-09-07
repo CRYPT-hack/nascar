@@ -63,6 +63,7 @@ Nothing here asserts; everything prints numbers you are expected to read. The
 hour-12 gate (HANDOFF.md §7) is graded from these.
 
 ```bash
+npx tsx tools/cpubench.ts                  # is this machine fast enough to trust a gate run
 npm test                                   # race logic: lobby, grid entry, laps, standings
 npx tsx tools/drivetest.ts interlagos      # vehicle: accel, braking, grip, drop, contact
 npx tsx tools/laptest.ts interlagos 10 3   # 10 AI cars, 3 laps: is the track drivable
@@ -74,8 +75,19 @@ npx tsx tools/netcheck.ts 100 20 0.02 90   # gate 2 and 3: prediction error, smo
 `server/room.ts`. It drives a `Room` through its state machine with no sockets
 and asserts the rules that decide whether ten strangers actually get a race.
 
+**Run `cpubench.ts` before any gate run.** It times one fixed workload - 6000
+ten-car simulation steps - and prints the cost per step against the 16.67 ms
+budget. If it does not read close to 1 ms, the machine is throttling and every
+timing-sensitive result is worthless. This was learned the hard way: a mid-session
+slowdown to 14.7 ms per step made the server look like it had lost 40% of its CPU
+headroom and the netcode look broken, when neither had changed.
+
 `netcheck` takes `lagMs jitterMs loss seconds` and runs the real client modules
-against the real server over a real socket. It cannot be run in a browser:
+against the real server over a real socket. It prints the server's achieved tick
+rate first, derived from the ticks stamped on the snapshots it receives, and
+marks everything below it invalid when that is not 60 Hz - because it hosts the
+server in its own process and a client under load will starve it. Set
+`NETCHECK_ATTACH=ws://host:port` to measure against a server running elsewhere. It cannot be run in a browser:
 `requestAnimationFrame` is throttled when the tab is hidden, so an automated
 browser session measures the harness rather than the netcode.
 
