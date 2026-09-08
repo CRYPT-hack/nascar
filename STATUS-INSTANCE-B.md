@@ -130,6 +130,18 @@ thrash layout.
 A landed a car model ("Give the car a face"), so the ownership question in
 earlier versions of this document is settled.
 
+### ~~Race photos~~ — done
+
+Captured on the phone in the lobby, relayed to the laptop, uploaded over HTTP,
+polled by every client, and drawn billboarded above the car. `shared/protocol.ts`
+untouched.
+
+### ~~Grid size~~ — done
+
+`CARS` sets how many cars race, for when fewer than ten people turn up. The
+`Room` already accepted `maxPlayers`; the server entry simply never exposed it.
+`AI_FILL` is clamped to it so the two cannot contradict.
+
 ### Not started, in my scope
 
 Nothing outstanding.

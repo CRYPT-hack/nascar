@@ -46,7 +46,20 @@ Both bind `0.0.0.0` so players on the venue LAN can join by IP. For the demo,
 `npm run build` then `npm run server` serves the built client and the track JSON
 from the game server itself — one process, one port, one URL to type (§9).
 
-Server environment: `PORT`, `TRACK`, `LAPS`, `AI_FILL` (fill the grid with AI).
+Server environment: `PORT`, `TRACK`, `LAPS`, `CARS`, `AI_FILL`.
+
+`CARS` is the size of the grid — use it when fewer than ten people turn up. It
+caps how many can join and is itself capped by the number of spawn slots.
+`AI_FILL` tops the grid up with AI when the race starts, and is clamped to
+`CARS` so the two settings cannot contradict each other.
+
+```bash
+CARS=6 npm run server              # a six-car race, humans only
+CARS=6 AI_FILL=6 npm run server    # four people show up, two AI fill the grid
+```
+
+Anything unusable in either falls back to the default with a warning rather than
+producing a zero-car grid.
 
 The `server` script passes `--max-old-space-size=96`. Without it V8 grows its
 heap to absorb snapshot serialisation and RSS climbs to ~167 MB before
@@ -132,6 +145,20 @@ laptop's existing input pipeline exactly like a gamepad, so prediction and
 reconciliation never learn it exists. If the phone locks its screen, drops off
 Wi-Fi or is backgrounded, frames stop, the link goes stale within 400 ms, and
 the keyboard takes over — the car does not hold the last steering angle.
+
+### Race photos
+
+Each player takes a photo on their phone in the lobby, and it rides on a square
+above their car for the whole race, so everyone can see whose car is whose. No
+camera, or permission refused, is a skip — that car just stays plain.
+
+Photos go over HTTP, never over either WebSocket: the game protocol is frozen
+and carries 30 Hz snapshots that a 10 KB image would sit in front of, and the
+pairing socket only reaches one phone. The server holds them in memory, publishes
+a `{ carId: version }` manifest, and clients poll it and fetch only what changed.
+
+Uploads are bounded on purpose — 64 KB, JPEG magic bytes required, a few dozen
+entries with the oldest evicted. This listens on a venue LAN.
 
 ### Latency
 
