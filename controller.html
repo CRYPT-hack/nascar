@@ -24,6 +24,25 @@
       <div id="setup-msg" role="status"></div>
     </div>
 
+    <div id="photo" hidden>
+      <h1>Your race photo</h1>
+      <p class="sub">
+        This sits on top of your car for the whole race, so everyone knows which one is
+        yours. Pull a face.
+      </p>
+      <div class="shot">
+        <video id="cam" playsinline muted autoplay></video>
+        <canvas id="shot-canvas" hidden></canvas>
+      </div>
+      <div class="photo-actions">
+        <button id="snap">Take photo</button>
+        <button id="retake" class="ghost" hidden>Retake</button>
+        <button id="usephoto" hidden>Use this</button>
+        <button id="skipphoto" class="ghost">Skip</button>
+      </div>
+      <div id="photo-msg" role="status"></div>
+    </div>
+
     <div id="drive" hidden>
       <div class="bar">
         <span id="status-dot" class="dot"></span>

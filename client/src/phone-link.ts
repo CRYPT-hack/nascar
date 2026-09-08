@@ -34,6 +34,8 @@ export class PhoneLink {
   status: PhoneLinkStatus = 'connecting';
   /** Called whenever `code` or `status` changes, so the UI can repaint. */
   onChange: (() => void) | null = null;
+  /** Called once when the player takes their race photo, with a JPEG data URL. */
+  onPhoto: ((dataUrl: string) => void) | null = null;
 
   private ws: WebSocket | null = null;
   private frame: CarInput | null = null;
@@ -109,6 +111,9 @@ export class PhoneLink {
             this.frame = null;
             this.set('waiting');
           }
+          break;
+        case 'photo':
+          if (typeof msg['data'] === 'string') this.onPhoto?.(msg['data']);
           break;
         case 'ctl':
           // Echo the sequence straight back so the phone can time the round

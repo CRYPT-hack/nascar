@@ -31,6 +31,7 @@ import { ChaseCamera } from './camera';
 import { Connection, defaultServerUrl, netSimFromQuery } from './connection';
 import { InputSource } from './input';
 import { PhoneLink } from './phone-link';
+import { AvatarStore as PhotoStore, avatarUrl } from './render/avatars';
 import { Sound } from './sound';
 import { NetStats } from './netstats';
 import { INPUT_REDUNDANCY, PredictedCar } from './prediction';
@@ -77,6 +78,8 @@ class Game {
   private surface: CarSnap['surface'] = 'asphalt';
   /** Last input actually sent, so the audio can hear throttle and brake. */
   private lastInput: CarInput = { ...NEUTRAL_INPUT };
+  /** Race photo waiting to be published, if it arrived before the car id did. */
+  private pendingPhoto: string | null = null;
   private readonly stats = new NetStats();
   private readonly ui = new Ui();
   conn!: Connection;
@@ -139,6 +142,12 @@ class Game {
     // the moment it goes stale, so a phone leaving Wi-Fi hands back to the keys
     // rather than holding the last steering angle into a wall.
     this.input.external = () => this.phone.current();
+    // A photo can arrive before the server has told us our car id, so it is
+    // held until there is somewhere to publish it to.
+    this.phone.onPhoto = (dataUrl) => {
+      this.pendingPhoto = dataUrl;
+      void this.publishPhoto();
+    };
     this.phone.onChange = () => this.ui.setPhoneLink(this.phone.status, this.phone.code);
     this.ui.setPhoneLink(this.phone.status, this.phone.code);
 
@@ -235,6 +244,7 @@ class Game {
         this.myColor = msg.color;
         this.laps = msg.laps;
         this.ui.setRaceLaps(msg.laps);
+        void this.publishPhoto();
         this.ui.showRoster([], this.myId);
         break;
 
@@ -509,6 +519,25 @@ class Game {
     });
 
     this.scene.render(this.camera.camera);
+  }
+
+  /**
+   * Upload the local player's race photo so every other client can fetch it.
+   *
+   * Over HTTP rather than either socket: the game protocol is frozen and
+   * carries snapshots that an image would sit in front of, and the pairing
+   * socket only reaches this one phone.
+   */
+  private async publishPhoto(): Promise<void> {
+    const dataUrl = this.pendingPhoto;
+    if (!dataUrl || this.myId < 0) return;
+    this.pendingPhoto = null;
+    try {
+      const body = await (await fetch(dataUrl)).blob();
+      await fetch(avatarUrl(this.myId), { method: 'POST', body });
+    } catch {
+      // A photo that fails to upload costs a plain car, not a race.
+    }
   }
 
   private viewFor(id: number, colorIndex: number, isLocal: boolean): CarView {

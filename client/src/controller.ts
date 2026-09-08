@@ -158,6 +158,14 @@ const steerFill = el('steer-fill');
 const pedalFill = el('pedal-fill');
 const readout = el('readout');
 const handbrakeBtn = el('handbrake');
+const photoPanel = el('photo');
+const cam = el<HTMLVideoElement>('cam');
+const shotCanvas = el<HTMLCanvasElement>('shot-canvas');
+const snapBtn = el<HTMLButtonElement>('snap');
+const retakeBtn = el<HTMLButtonElement>('retake');
+const usePhotoBtn = el<HTMLButtonElement>('usephoto');
+const skipPhotoBtn = el<HTMLButtonElement>('skipphoto');
+const photoMsg = el('photo-msg');
 const flipBtn = el<HTMLButtonElement>('flip');
 const recalBtn = el<HTMLButtonElement>('recal');
 
@@ -249,6 +257,91 @@ function calibrate(): void {
   pitchFilter.reset();
 }
 
+// --- Race photo ------------------------------------------------------------
+
+/**
+ * Square edge of the photo sent to the laptop, pixels.
+ *
+ * It ends up on a small quad above a moving car, so anything larger is detail
+ * nobody can see paid for on every other player's network. 160 px JPEG lands
+ * near 8 KB.
+ */
+const PHOTO_SIZE = 160;
+const PHOTO_QUALITY = 0.72;
+
+let stream: MediaStream | null = null;
+let captured: string | null = null;
+
+/** Show the photo step and start the front camera. */
+async function openPhotoStep(): Promise<void> {
+  photoPanel.hidden = false;
+  drive.hidden = true;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 640 } },
+      audio: false,
+    });
+    cam.srcObject = stream;
+    await cam.play();
+  } catch {
+    // No camera, or permission refused. Racing without a photo is fine, so this
+    // is a message and a skip rather than a dead end.
+    photoMsg.textContent = 'No camera available. You can skip — your car just stays plain.';
+    snapBtn.disabled = true;
+  }
+}
+
+function closePhotoStep(): void {
+  for (const t of stream?.getTracks() ?? []) t.stop();
+  stream = null;
+  cam.srcObject = null;
+  photoPanel.hidden = true;
+  drive.hidden = false;
+}
+
+/** Grab the current frame, centre-cropped square and downscaled. */
+function capture(): void {
+  const w = cam.videoWidth;
+  const h = cam.videoHeight;
+  if (!w || !h) {
+    photoMsg.textContent = 'Camera is not ready yet.';
+    return;
+  }
+  const side = Math.min(w, h);
+  shotCanvas.width = PHOTO_SIZE;
+  shotCanvas.height = PHOTO_SIZE;
+  const ctx = shotCanvas.getContext('2d');
+  if (!ctx) return;
+  ctx.drawImage(cam, (w - side) / 2, (h - side) / 2, side, side, 0, 0, PHOTO_SIZE, PHOTO_SIZE);
+  captured = shotCanvas.toDataURL('image/jpeg', PHOTO_QUALITY);
+
+  shotCanvas.hidden = false;
+  cam.hidden = true;
+  snapBtn.hidden = true;
+  retakeBtn.hidden = false;
+  usePhotoBtn.hidden = false;
+  photoMsg.textContent = '';
+}
+
+function retake(): void {
+  captured = null;
+  shotCanvas.hidden = true;
+  cam.hidden = false;
+  snapBtn.hidden = false;
+  retakeBtn.hidden = true;
+  usePhotoBtn.hidden = true;
+}
+
+snapBtn.addEventListener('click', capture);
+retakeBtn.addEventListener('click', retake);
+skipPhotoBtn.addEventListener('click', closePhotoStep);
+usePhotoBtn.addEventListener('click', () => {
+  if (captured && ws?.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ t: 'photo', data: captured }));
+  }
+  closePhotoStep();
+});
+
 // --- Connection ------------------------------------------------------------
 
 function connect(code: string): void {
@@ -276,9 +369,10 @@ function connect(code: string): void {
       paired = true;
       setStatus(`driving — ${String(msg['code'])}`, 'ok');
       setup.hidden = true;
-      drive.hidden = false;
       calibrate();
       void keepAwake();
+      // The photo step comes first, in the lobby, before anyone is driving.
+      void openPhotoStep();
     } else if (msg['t'] === 'error') {
       paired = false;
       const text = String(msg['message'] ?? 'disconnected');
