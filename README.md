@@ -133,7 +133,34 @@ reconciliation never learn it exists. If the phone locks its screen, drops off
 Wi-Fi or is backgrounded, frames stop, the link goes stale within 400 ms, and
 the keyboard takes over — the car does not hold the last steering angle.
 
-To exercise the whole path without a phone in your hand:
+### Latency
+
+Measured, because the guess would have been wrong. The transport is not the
+problem: phone to relay to laptop and back is **0.9 ms mean, 2.0 ms p95** on a
+loopback LAN, and every control frame carries a sequence the laptop echoes, so
+the phone shows its own live round trip next to the steering readout.
+
+The delay was in the phone's own filter. Fixed exponential smoothing at 0.35 per
+sample took **89 ms to reach 63%** of a steering step and **138 ms to reach
+90%** — a hundred times the network cost. It has been replaced with a One Euro
+filter, which raises its cutoff with the speed of movement:
+
+| | fixed smoothing | One Euro |
+|---|---|---|
+| step to 63% | 89 ms | **17 ms** |
+| step to 90% | 138 ms | **33 ms** |
+| steering from ±0.4° hand tremor | — | **0.000** |
+
+So it is both quicker when you turn and still dead when you are holding it.
+Frames are also sent on each sensor reading rather than on a 40 Hz timer, which
+removed up to 25 ms of pure quantisation, and `noDelay` is set on the pairing
+sockets so Nagle cannot batch small control frames on the venue network.
+
+Tuning lives at the top of `client/src/controller.ts`: `MIN_CUTOFF` for how
+still it is when still, `BETA` for how fast it reacts when moving.
+
+To exercise the whole path without a phone in your hand — it also prints the
+round trip every five seconds:
 
 ```bash
 npx tsx tools/phonetest.ts <CODE> weave

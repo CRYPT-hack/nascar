@@ -21,6 +21,11 @@
  *   weave      full throttle, steering sweep
  *   brake      brake held; becomes reverse once stopped
  *   idle       neutral, to confirm the link without moving
+ *
+ * Every frame carries a sequence number that the laptop echoes back, so this
+ * also reports the round trip phone -> relay -> laptop -> relay -> phone. That
+ * is the controllable part of the delay between tilting a phone and the car
+ * responding; the rest is the game's own input and simulation cadence.
  */
 
 import { WebSocket } from 'ws';
@@ -66,6 +71,26 @@ ws.on('open', () => {
   ws.send(JSON.stringify({ t: 'phone', code }));
 });
 
+/** Send time of each outstanding frame, by sequence number. */
+const sent = new Map<number, number>();
+const rtt: number[] = [];
+let seq = 0;
+
+function report(): void {
+  if (rtt.length === 0) {
+    console.log('round trip: no acks yet');
+    return;
+  }
+  const s = [...rtt].sort((a, b) => a - b);
+  const at = (p: number): string => s[Math.min(s.length - 1, Math.floor(s.length * p))]!.toFixed(1);
+  const mean = (s.reduce((a, b) => a + b, 0) / s.length).toFixed(1);
+  console.log(
+    `round trip over ${s.length} frames: mean ${mean} ms, median ${at(0.5)} ms, ` +
+      `p95 ${at(0.95)} ms, max ${s[s.length - 1]!.toFixed(1)} ms`,
+  );
+  rtt.length = 0;
+}
+
 ws.on('message', (raw) => {
   const msg = JSON.parse(String(raw)) as Record<string, unknown>;
   if (msg['t'] === 'paired') {
@@ -73,8 +98,17 @@ ws.on('message', (raw) => {
     const timer = setInterval(() => {
       if (ws.readyState !== ws.OPEN) return clearInterval(timer);
       const t = (Date.now() - started) / 1000;
-      ws.send(JSON.stringify({ t: 'ctl', ...frame(t) }));
+      const s = seq++;
+      sent.set(s, performance.now());
+      ws.send(JSON.stringify({ t: 'ctl', ...frame(t), s }));
     }, 1000 / SEND_HZ);
+    setInterval(report, 5000).unref?.();
+  } else if (msg['t'] === 'ack') {
+    const at = sent.get(msg['s'] as number);
+    if (at !== undefined) {
+      rtt.push(performance.now() - at);
+      sent.delete(msg['s'] as number);
+    }
   } else if (msg['t'] === 'error') {
     console.error(`relay: ${String(msg['message'])}`);
     process.exit(1);

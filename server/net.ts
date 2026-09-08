@@ -132,7 +132,15 @@ export class GameServer {
       // own path and their own tiny message set, so shared/protocol.ts stays
       // frozen and the game's message handling is untouched.
       const path = (req.url ?? '/').split('?')[0];
-      if (path === '/pair') this.remote.accept(ws);
+      if (path === '/pair') {
+        // Control frames are tiny and frequent, which is exactly the shape
+        // Nagle's algorithm holds back waiting for more to send. Node's http
+        // server defaults noDelay to true on recent versions, but the cost of
+        // being wrong here is tens of milliseconds of steering lag on the venue
+        // network, and the cost of setting it anyway is nothing.
+        (ws as unknown as { _socket?: { setNoDelay(v: boolean): void } })._socket?.setNoDelay(true);
+        this.remote.accept(ws);
+      }
       else this.onConnection(ws);
     });
   }

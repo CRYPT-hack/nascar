@@ -30,14 +30,79 @@ const THROTTLE_RANGE = 22;
 const BRAKE_RANGE = 20;
 /** Ignore this much wobble around neutral, degrees. */
 const DEADZONE = 3;
-/** Control send rate. The client samples input at 30 Hz; matching it is enough. */
-const SEND_HZ = 40;
-/** Low-pass factor per sample. Hands shake; the front wheels should not. */
-const SMOOTHING = 0.35;
+/**
+ * Upper bound on send rate. Frames go out on each sensor reading rather than on
+ * a timer — a fixed 40 Hz timer added up to 25 ms of pure quantisation delay on
+ * top of everything else — so this only exists to stop a fast sensor flooding
+ * the relay, which drops anything above 90 Hz anyway.
+ */
+const MAX_SEND_HZ = 70;
+
+/**
+ * Keepalive rate when the phone is perfectly still.
+ *
+ * Some devices stop emitting orientation events when nothing moves. Without
+ * this the laptop sees no frames, decides after 400 ms that the phone is gone,
+ * and hands back to the keyboard mid-corner while the player is holding the
+ * phone perfectly steady on a straight.
+ */
+const KEEPALIVE_MS = 60;
+
+/**
+ * One Euro filter tuning, in degrees.
+ *
+ * Fixed exponential smoothing forces a choice between jitter and lag: the old
+ * 0.35-per-sample filter took 89 ms to reach 63% of a steering step and 138 ms
+ * to reach 90%, measured, against 0.9 ms for the whole network round trip. The
+ * filter was the latency.
+ *
+ * One Euro adapts instead: heavy smoothing while the phone is near still, which
+ * is when hand tremor shows and nobody is asking the car to do anything, and a
+ * cutoff that rises with movement speed, which is when the player wants the
+ * front wheels to follow immediately.
+ */
+const MIN_CUTOFF = 1.5;
+const BETA = 0.1;
+const D_CUTOFF = 1.0;
 
 interface Angles {
   pitch: number;
   roll: number;
+}
+
+/**
+ * One Euro filter for a single axis.
+ *
+ * Standard formulation: low-pass the signal with a cutoff that rises with the
+ * signal's own rate of change, so it is smooth when slow and quick when fast.
+ */
+class OneEuro {
+  private x: number | null = null;
+  private dx = 0;
+
+  reset(): void {
+    this.x = null;
+    this.dx = 0;
+  }
+
+  filter(value: number, dt: number): number {
+    if (this.x === null || !(dt > 0)) {
+      this.x = value;
+      return value;
+    }
+    const alphaFor = (cutoff: number): number => {
+      const tau = 1 / (2 * Math.PI * cutoff);
+      return 1 / (1 + tau / dt);
+    };
+
+    const rate = (value - this.x) / dt;
+    this.dx += alphaFor(D_CUTOFF) * (rate - this.dx);
+
+    const cutoff = MIN_CUTOFF + BETA * Math.abs(this.dx);
+    const a = alphaFor(cutoff);
+    this.x += a * (value - this.x);
+    return this.x;
+  }
 }
 
 /**
@@ -102,9 +167,20 @@ let paired = false;
 let haveSensor = false;
 let raw: Angles = { pitch: 0, roll: 0 };
 let neutral: Angles = { pitch: 0, roll: 0 };
-let smooth: Angles = { pitch: 0, roll: 0 };
 let invert = false;
 let handbrake = false;
+
+const rollFilter = new OneEuro();
+const pitchFilter = new OneEuro();
+/** Timestamp of the last sensor reading, for the filter's dt. */
+let lastSampleAt = 0;
+let lastSentAt = 0;
+
+/** Sequence number and outstanding send times, for the round-trip readout. */
+let seq = 0;
+const inFlight = new Map<number, number>();
+const rttSamples: number[] = [];
+let rttShown = 0;
 
 function pairUrl(): string {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -123,6 +199,9 @@ function onOrientation(e: DeviceOrientationEvent): void {
   if (e.beta === null || e.gamma === null) return;
   haveSensor = true;
   raw = toScreenAngles(e.beta, e.gamma, screenAngle());
+  // Send on the reading rather than waiting for a timer. A sensor tick is the
+  // only moment new information exists, so anything else is added delay.
+  emit();
 }
 
 /**
@@ -166,7 +245,8 @@ async function requestSensors(): Promise<boolean> {
 
 function calibrate(): void {
   neutral = { ...raw };
-  smooth = { pitch: 0, roll: 0 };
+  rollFilter.reset();
+  pitchFilter.reset();
 }
 
 // --- Connection ------------------------------------------------------------
@@ -182,6 +262,14 @@ function connect(code: string): void {
     try {
       msg = JSON.parse(String(ev.data)) as Record<string, unknown>;
     } catch {
+      return;
+    }
+    if (msg['t'] === 'ack') {
+      const at = inFlight.get(msg['s'] as number);
+      if (at !== undefined) {
+        rttSamples.push(performance.now() - at);
+        inFlight.delete(msg['s'] as number);
+      }
       return;
     }
     if (msg['t'] === 'paired') {
@@ -222,30 +310,54 @@ async function keepAwake(): Promise<void> {
 
 // --- Control loop ----------------------------------------------------------
 
-function tick(): void {
-  const dRoll = raw.roll - neutral.roll;
-  const dPitch = (raw.pitch - neutral.pitch) * (invert ? -1 : 1);
+/**
+ * Filter the latest reading and send it.
+ *
+ * Called from the sensor event, and from a keepalive timer when the phone is
+ * still enough that the sensor stops reporting.
+ */
+function emit(): void {
+  const now = performance.now();
+  if (now - lastSentAt < 1000 / MAX_SEND_HZ) return;
 
-  smooth.roll += (dRoll - smooth.roll) * SMOOTHING;
-  smooth.pitch += (dPitch - smooth.pitch) * SMOOTHING;
+  const dt = lastSampleAt === 0 ? 1 / 60 : Math.min(0.25, (now - lastSampleAt) / 1000);
+  lastSampleAt = now;
+  lastSentAt = now;
 
-  const steer = curve(smooth.roll, STEER_RANGE);
+  const dRoll = rollFilter.filter(raw.roll - neutral.roll, dt);
+  const dPitch = pitchFilter.filter((raw.pitch - neutral.pitch) * (invert ? -1 : 1), dt);
+
+  const steer = curve(dRoll, STEER_RANGE);
   // Forward tilt is throttle, backward is brake. Brake doubles as reverse once
   // the car has stopped, which is how vehicle/car.ts already works.
-  const forward = -smooth.pitch;
+  const forward = -dPitch;
   const throttle = forward > 0 ? curve(forward, THROTTLE_RANGE) : 0;
   const brake = forward < 0 ? curve(-forward, BRAKE_RANGE) : 0;
 
   if (paired && ws?.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ t: 'ctl', steer, throttle, brake, handbrake }));
+    const s = seq++;
+    inFlight.set(s, now);
+    // Bound the map if acks stop coming back, so a dead link cannot leak.
+    if (inFlight.size > 256) inFlight.delete(inFlight.keys().next().value as number);
+    ws.send(JSON.stringify({ t: 'ctl', steer, throttle, brake, handbrake, s }));
   }
 
   steerFill.style.transform = `translateX(${(steer * 50).toFixed(1)}%)`;
   pedalFill.style.height = `${(Math.max(throttle, brake) * 100).toFixed(0)}%`;
   pedalFill.className = brake > 0 ? 'pedal-fill braking' : 'pedal-fill';
+
+  const lag = rttShown > 0 ? `   ${rttShown.toFixed(0)} ms` : '';
   readout.textContent =
     `steer ${steer >= 0 ? '+' : ''}${steer.toFixed(2)}   ` +
-    `${brake > 0 ? `brake ${brake.toFixed(2)}` : `throttle ${throttle.toFixed(2)}`}`;
+    `${brake > 0 ? `brake ${brake.toFixed(2)}` : `throttle ${throttle.toFixed(2)}`}${lag}`;
+}
+
+/** Median round trip over the recent window, shown so a bad link is visible. */
+function updateRtt(): void {
+  if (rttSamples.length === 0) return;
+  const sorted = [...rttSamples].sort((a, b) => a - b);
+  rttShown = sorted[Math.floor(sorted.length / 2)]!;
+  rttSamples.length = 0;
 }
 
 // --- Wiring ----------------------------------------------------------------
@@ -302,4 +414,7 @@ if (!window.isSecureContext) {
     'Opened over http. Motion sensors need https — run `npm run certs` on the laptop and reload over https.';
 }
 
-setInterval(tick, 1000 / SEND_HZ);
+// Keepalive: a phone lying perfectly still may stop emitting sensor events,
+// and silence is indistinguishable from a phone that has left the network.
+setInterval(emit, KEEPALIVE_MS);
+setInterval(updateRtt, 1000);

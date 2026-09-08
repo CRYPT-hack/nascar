@@ -119,6 +119,12 @@ export class RemoteControlHub {
       case 'ctl':
         this.relayControl(ws, msg);
         break;
+      case 'ack':
+        // Latency probe coming back the other way: the laptop echoes the phone's
+        // own sequence and timestamp, so the phone can measure round trip
+        // against its own clock and never has to trust the laptop's.
+        this.relayAck(ws, msg);
+        break;
       default:
         break;
     }
@@ -191,7 +197,14 @@ export class RemoteControlHub {
       brake: clamp(msg['brake'], 0, 1),
       handbrake: msg['handbrake'] === true,
     };
-    send(pair.host, { t: 'ctl', ...frame });
+    // `s` rides along untouched so the laptop can echo it back for timing.
+    send(pair.host, { t: 'ctl', ...frame, s: msg['s'] });
+  }
+
+  private relayAck(ws: WebSocket, msg: Record<string, unknown>): void {
+    const pair = this.bySocket.get(ws);
+    if (!pair || pair.host !== ws || !pair.phone) return;
+    send(pair.phone, { t: 'ack', s: msg['s'] });
   }
 
   private onClose(ws: WebSocket): void {

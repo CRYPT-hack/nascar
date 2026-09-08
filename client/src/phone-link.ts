@@ -111,6 +111,12 @@ export class PhoneLink {
           }
           break;
         case 'ctl':
+          // Echo the sequence straight back so the phone can time the round
+          // trip. Done before anything else in this branch: the point is to
+          // measure the link, not the work that follows it.
+          if (msg['s'] !== undefined && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ t: 'ack', s: msg['s'] }));
+          }
           this.frame = {
             throttle: num(msg['throttle']),
             brake: num(msg['brake']),

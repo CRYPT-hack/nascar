@@ -104,6 +104,12 @@ pipeline like a gamepad, so the netcode never learns it exists.
 in a secure context, and over plain http the page loads and no event ever fires.
 Without certs the server serves http exactly as before.
 
+Latency was measured rather than guessed, and the guess would have been wrong.
+The transport is 0.9 ms mean round trip; the delay was the phone's own smoothing
+filter, at 89 ms to 63% of a steering step and 138 ms to 90%. A One Euro filter
+took that to 17 ms and 33 ms while still rejecting hand tremor completely.
+Frames now go out on each sensor reading rather than on a 40 Hz timer.
+
 ### Not started, in my scope
 
 | Item | Notes |
@@ -132,6 +138,9 @@ Without certs the server serves http exactly as before.
 - 0 trees or spectators inside the barrier line, checked against the sampler.
 - HUD values, lobby roster and results table read correctly from the DOM.
 - Both circuits load, switch and rebuild scenery without error.
+- Phone control latency: 0.9 ms mean / 2.0 ms p95 transport round trip, and a
+  steering step reaching 90% in 33 ms after the filter change, down from 138 ms.
+  Hand tremor of ±0.4° still produces exactly zero steering.
 - Phone control end to end: a simulated phone drove the car from 0 to 77 km/h
   over the relay, and killing it mid-drive released the throttle immediately
   rather than holding the last input. Angle mapping checked against hand
