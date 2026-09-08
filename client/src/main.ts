@@ -27,7 +27,7 @@ import type { TrackData } from '../../shared/track-schema';
 import { validateTrack } from '../../shared/track-schema';
 import { yawOf, type V3 } from '../../vehicle/math3';
 import { createRaceWorld, initPhysics, type RaceWorld } from '../../vehicle/world';
-import { ChaseCamera } from './camera';
+import { CAMERA_MODES, CAMERA_TUNING, ChaseCamera, type CameraMode } from './camera';
 import { Connection, defaultServerUrl, netSimFromQuery } from './connection';
 import { InputSource } from './input';
 import { PhoneLink } from './phone-link';
@@ -38,6 +38,7 @@ import { INPUT_REDUNDANCY, PredictedCar } from './prediction';
 import { recordingRequested, startRecording } from './record';
 import { RemoteCars } from './remote';
 import { preloadCarModels } from './render/car-mesh';
+import { QUALITY_ORDER, short, type Quality } from './render/quality';
 import { CarView, Scene } from './scene';
 import { Standings } from './standings';
 import { Ui } from './ui';
@@ -112,6 +113,8 @@ class Game {
   private spawned = false;
   /** Wall clock of the last reset we sent, for the client-side cooldown. */
   private lastResetAt = -1e9;
+  private quality: Quality = 'high';
+  private cameraMode: CameraMode = 'chase';
 
   constructor() {
     this.canvas = document.getElementById('view') as HTMLCanvasElement;
@@ -127,7 +130,14 @@ class Game {
     this.rw = createRaceWorld(this.track);
     this.scene = new Scene(this.canvas);
     this.scene.addTrack(this.track);
-    this.camera = new ChaseCamera(innerWidth / innerHeight);
+    let saved: string | null = null;
+    try {
+      saved = localStorage.getItem('cameraMode');
+    } catch {
+      /* fall through to the default */
+    }
+    if (saved === 'chase' || saved === 'still') this.cameraMode = saved;
+    this.camera = new ChaseCamera(innerWidth / innerHeight, CAMERA_TUNING[this.cameraMode]);
     this.prediction = new PredictedCar(this.rw);
     this.remote = new RemoteCars(this.rw);
     this.standings = new Standings(this.rw.query);
@@ -167,6 +177,13 @@ class Game {
     this.ui.showLobby();
 
     document.getElementById('boot')?.remove();
+
+    this.quality = this.scene.quality;
+    // Names the GPU on purpose: on a laptop with two, which one the browser
+    // picked is the single most useful thing to be able to see.
+    this.ui.setNotice(
+      `${short(this.scene.gpu)} · graphics ${this.quality} — Q to change, C for camera`,
+    );
 
     // ?rec=1 only. Posts a line a second to the server so a session can be read
     // back afterwards; the interesting failures are client-side and the server
@@ -394,6 +411,8 @@ class Game {
     // The R key set a flag that nothing ever read, so pressing it did nothing
     // at all until now.
     if (this.input.takeResetRequest()) this.requestReset();
+    if (this.input.takeQualityRequest()) this.cycleQuality();
+    if (this.input.takeCameraRequest()) this.cycleCamera();
     this.ui.setResetVisible(this.canReset());
     this.ui.tick();
     this.draw(now, dt);
@@ -422,6 +441,39 @@ class Game {
    * whole, the same as a grid reset, because the queued inputs describe a car
    * that is no longer where they thought it was.
    */
+  /**
+   * Step through the render tiers, live.
+   *
+   * Here because the profiling that matters is the player's eyes on their own
+   * machine: the numbers this session could take were from a hidden pane with a
+   * race running on the same box, and they were incoherent enough to be worth
+   * nothing. Pressing a key and seeing whether it is smooth settles it.
+   */
+  private cycleQuality(): void {
+    const i = QUALITY_ORDER.indexOf(this.quality);
+    const next = QUALITY_ORDER[(i + 1) % QUALITY_ORDER.length] as Quality;
+    this.quality = next;
+    this.scene.applyQuality(next);
+    this.ui.setNotice(`Graphics: ${next}  (Q to change)`);
+  }
+
+  /**
+   * Chase or still. Remembered, because a camera preference is personal and
+   * nobody wants to set it again every race.
+   */
+  private cycleCamera(): void {
+    const i = CAMERA_MODES.indexOf(this.cameraMode);
+    const next = CAMERA_MODES[(i + 1) % CAMERA_MODES.length] as CameraMode;
+    this.cameraMode = next;
+    this.camera.setTuning(CAMERA_TUNING[next]);
+    try {
+      localStorage.setItem('cameraMode', next);
+    } catch {
+      /* private window; the choice just will not persist */
+    }
+    this.ui.setNotice(`Camera: ${next}  (C to change)`);
+  }
+
   private requestReset(): void {
     const now = performance.now();
     // Mirrors the server's cooldown so a press it is going to refuse does not

@@ -19,6 +19,7 @@ import * as THREE from 'three';
 import { CAR, CAR_COLORS } from '../../shared/constants';
 import type { TrackData } from '../../shared/track-schema';
 import { configureRenderer, createEnvironment } from './render/scene';
+import { QUALITY, rememberQuality, resolveQuality, type Quality } from './render/quality';
 import {
   bodyMaterial,
   getCarModel,
@@ -194,12 +195,52 @@ export class Scene {
   readonly renderer: THREE.WebGLRenderer;
 
   private view: TrackView | null = null;
+  private sun: THREE.DirectionalLight | null = null;
+  private scenery: THREE.Object3D | null = null;
   private followShadow: ((t: THREE.Vector3) => void) | null = null;
   private readonly shadowTarget = new THREE.Vector3();
 
+  /** The tier in force. Resolved before the context exists, because MSAA cannot
+   * be turned off afterwards without building a new one. */
+  readonly quality: Quality;
+  readonly gpu: string;
+  /** Why this tier: the URL, a remembered choice, or what the GPU looks like. */
+  readonly qualityReason: string;
+
   constructor(canvas: HTMLCanvasElement) {
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
-    configureRenderer(this.renderer);
+    const picked = resolveQuality(location.search);
+    this.quality = picked.quality;
+    this.gpu = picked.gpu;
+    this.qualityReason = picked.why;
+
+    this.renderer = new THREE.WebGLRenderer({
+      canvas,
+      antialias: QUALITY[this.quality].antialias,
+      powerPreference: 'high-performance',
+    });
+    configureRenderer(this.renderer, this.quality);
+  }
+
+  /**
+   * Change tier without a reload, for everything that can change live: pixel
+   * ratio, shadows, scenery and fog. Antialiasing is fixed at construction, so
+   * it keeps whatever the tier at load time asked for — the difference is small
+   * next to the other three.
+   */
+  applyQuality(q: Quality): void {
+    const s = QUALITY[q];
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, s.pixelRatio));
+    this.renderer.shadowMap.enabled = s.shadows;
+    if (this.sun) this.sun.castShadow = s.shadows;
+    if (this.scenery) this.scenery.visible = s.scenery;
+    if (this.scene.fog instanceof THREE.Fog) this.scene.fog.far = s.fogFar;
+    // Shadow state is baked into every compiled program.
+    this.scene.traverse((o) => {
+      const m = (o as THREE.Mesh).material;
+      if (Array.isArray(m)) for (const one of m) one.needsUpdate = true;
+      else if (m) (m as THREE.Material).needsUpdate = true;
+    });
+    rememberQuality(q);
   }
 
   resize(w: number, h: number): void {
@@ -216,11 +257,17 @@ export class Scene {
    * until now. `main.ts` calls this immediately after constructing.
    */
   addTrack(track: TrackData): void {
-    const env = createEnvironment(this.scene, extentOf(track));
+    const env = createEnvironment(this.scene, extentOf(track), this.quality);
     this.followShadow = env.followShadow;
+    this.sun = env.sun;
 
     this.view = createTrackView(track);
     this.scene.add(this.view.root, createGroundPlane(track));
+
+    // Trees, crowds and tyre stacks are decoration, and the cheapest thing to
+    // drop on a GPU that cannot hold the frame.
+    this.scenery = this.scene.getObjectByName('scenery') ?? this.view.root.getObjectByName('scenery') ?? null;
+    if (this.scenery) this.scenery.visible = QUALITY[this.quality].scenery;
   }
 
   add(o: THREE.Object3D): void {

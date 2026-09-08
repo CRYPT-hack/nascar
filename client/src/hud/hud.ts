@@ -92,6 +92,8 @@ export class Hud {
   private readonly speedValue: HTMLDivElement;
   private readonly draft: HTMLDivElement;
   private readonly resetButton: HTMLButtonElement;
+  private readonly notice: HTMLDivElement;
+  private noticeTimer = 0;
   private readonly banner: HTMLDivElement;
   private readonly board: HTMLDivElement;
   private readonly muteButton: HTMLButtonElement;
@@ -154,6 +156,8 @@ export class Hud {
       this.resetButton.blur();
     });
 
+    this.notice = el('div', 'hud-notice');
+
     this.muteButton = el('button', 'hud-mute', 'SOUND ON');
     this.muteButton.type = 'button';
     this.muteButton.addEventListener('click', () => {
@@ -167,7 +171,18 @@ export class Hud {
     this.board.append(el('div', 'hud-label', 'Running order'));
     this.board.hidden = true;
 
-    this.root.append(position, lap, this.times, speed, this.draft, this.resetButton, this.banner, this.board, this.muteButton);
+    this.root.append(
+      position,
+      lap,
+      this.times,
+      speed,
+      this.draft,
+      this.resetButton,
+      this.notice,
+      this.banner,
+      this.board,
+      this.muteButton,
+    );
     parent.append(this.root);
   }
 
@@ -287,6 +302,14 @@ export class Hud {
   }
 
   /** Hide the racing readouts but keep the banner, for the lobby and spectating. */
+  /** A short message that fades itself, for things like a graphics change. */
+  setNotice(text: string): void {
+    this.notice.textContent = text;
+    this.notice.classList.add('on');
+    clearTimeout(this.noticeTimer);
+    this.noticeTimer = setTimeout(() => this.notice.classList.remove('on'), 4000) as unknown as number;
+  }
+
   /** Shown only while there is a car to recover. */
   setResetVisible(visible: boolean): void {
     this.toggle('reset', this.resetButton, 'on', visible);

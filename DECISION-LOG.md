@@ -1335,3 +1335,108 @@ nothing happened is worse than no button.
 Ten checks in `roomtest` cover it: that it lands back on the track, the right
 way up, facing the right way, stationary, **without being granted lap
 progress**, and that a second press inside the cooldown is refused.
+
+---
+
+## Unplayable on the demo machine: it is the GPU, and there are tiers now
+
+Reported as "super laggy, unplayable" on the machine the demo runs on. Findings,
+in the order they mattered:
+
+**It is not the CPU and it is not the physics.** Per-frame client work measured
+about 2 ms in total: prediction step 0.78 ms, remote ghosts 0.09 ms, every pose
+and HUD update together under 0.1 ms, and issuing the draw 1.87 ms. The server
+has 71% headroom.
+
+**It is not the PGS change either, though I checked because I had claimed it was
+free.** That claim was measured on a two-car rig with almost no contacts, which
+was the wrong workload. On ten cars it costs **+0.43 ms of a 16.67 ms budget** -
+real, small, and not what makes a game unplayable.
+
+**It is the GPU.** The browser runs on **Intel UHD Graphics**, an integrated
+part, and the environment was tuned for something else: ~150k triangles, ~1400
+trees and ~1900 spectators, a 2048² soft-shadow map, MSAA, and a device pixel
+ratio of up to 2 - four times the pixels of 1. None of that is wrong on a
+discrete GPU. It is simply not a setting an integrated one can hold, and the
+game had no way to say so.
+
+`client/src/render/quality.ts` adds three tiers. Precedence is `?quality=` in
+the URL, then a remembered choice, then what the GPU name looks like; this
+machine auto-detects **low**.
+
+| | pixel ratio | shadows | shadow map | MSAA | scenery | fog |
+|---|---|---|---|---|---|---|
+| low | 0.7 | off | - | off | off | 900 m |
+| medium | 1 | on | 1024² | off | on | 1600 m |
+| high | 2 | on | 2048² | on | on | 2800 m |
+
+**Q** cycles them live. Everything but MSAA applies without a reload.
+
+### What I could not measure, and why I am not claiming a figure
+
+I could not get a trustworthy frame time. The browser pane in this session is
+hidden, which pauses `requestAnimationFrame` outright, and the only race I could
+run was on the same box as the server. The numbers that produced were
+incoherent - a *smaller* render target reading slower, hiding scenery reading
+six times slower - so they are worth nothing and are not recorded here.
+
+Two readings are sound, because they were interleaved so drift could not fake a
+winner, and because they agree across repeats: in the lobby at 1600x900, low
+renders in **0.31 ms** against high's **0.78 ms**. That is the right direction
+and about the right magnitude, but a lobby is not a race and I will not
+extrapolate it into an fps claim.
+
+One earlier number in this session was wrong and is worth flagging: a first pass
+reported shadows costing 5.35 ms of a 7.20 ms frame. That reading included
+one-off shader compilation and shadow-map allocation. In steady state the same
+scene was 1.44 ms total. Warm up before timing a GPU.
+
+---
+
+## A still camera, and making the GPU switch visible
+
+### The camera lag is not frame rate
+
+`posTau` is 0.1: the chase camera is a tenth of a second behind where it wants
+to be. At 60 m/s that is **six metres** of trailing, and it grows with speed,
+which is exactly the complaint - fine at low speed, floaty when quick. The
+smoothing is frame-rate independent (`1 - exp(-dt/tau)`), so this is tuning and
+not a dropped-frame bug, and no amount of GPU will fix it.
+
+`STILL` keeps the geometry and takes the lag out: `posTau` 0.1 -> 0.03,
+`dirTau` 0.16 -> 0.05, and pull-back per unit speed 0.055 -> 0.018 so the car
+does not shrink away down a straight. **C** cycles it, and the choice is
+remembered.
+
+What it deliberately does *not* do is lock to chassis yaw. That is what the
+chase camera exists to avoid - a rigidly bolted camera swings hard the moment
+the car steps out of line, which is precisely when the player needs to see
+ahead. The blend toward direction of travel stays; only the delay goes.
+
+`setTuning` does not reset the smoothing, so switching mid-corner eases across
+instead of cutting.
+
+### The discrete GPU
+
+This machine has an **RTX 4050** as well as the Intel UHD, and the browser is
+choosing the Intel. `powerPreference: 'high-performance'` is already set on the
+context; it is a hint, and Windows overrode it. Choosing the adapter is a
+system setting, so it is the user's to make, not this project's.
+
+What the code can do, and now does:
+
+- **Name the GPU on screen at boot** - "Intel(R) UHD Graphics · graphics low".
+  On a laptop with two adapters, which one the browser picked is the single most
+  useful thing to be able to see, and there was no way to see it.
+- **Remember the tier against the GPU it was chosen for.** Otherwise a tier
+  detected for the integrated chip sticks after the switch and hides the whole
+  upgrade. A stored entry from a different adapter is re-detected rather than
+  trusted: verified by planting an entry claiming the RTX and reloading, which
+  correctly reported "GPU changed, re-detected as Intel(R) UHD Graphics".
+- Values written by the previous build were a bare string rather than JSON;
+  those fail to parse and fall through to detection, which is the right
+  outcome, and the next change rewrites them.
+
+`short()` is checked against the four renderer strings that actually occur -
+Intel UHD, the RTX 4050, SwiftShader, and empty - and maps them to low, high,
+low, medium.
