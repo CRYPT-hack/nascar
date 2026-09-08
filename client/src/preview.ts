@@ -232,7 +232,7 @@ window.addEventListener('keydown', (e) => {
       onColor: () => undefined,
     });
   }
-  if (e.key === 'j' || e.key === 'J') screens.showResults(DEMO_RESULTS, 3, () => screens.hide());
+  if (e.key === 'j' || e.key === 'J') screens.showResults(DEMO_RESULTS, 3, RACE_LAPS, () => screens.hide());
   if (e.key === 'Escape') screens.hide();
   if (e.key === '1' && currentName !== 'interlagos') void show('interlagos');
   if (e.key === '2' && currentName !== 'oval') void show('oval');

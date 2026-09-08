@@ -26,7 +26,7 @@
 
 import { CAR_COLORS, RACE_LAPS } from '../../shared/constants';
 import type { PlayerInfo, RaceState, ResultEntry } from '../../shared/protocol';
-import { formatLapTime, Hud, initialHudState, type HudState } from './hud/hud';
+import { formatLapTime, Hud, initialHudState, type HudState, type StandingRow } from './hud/hud';
 import { Screens } from './hud/screens';
 import type { PhoneLinkStatus } from './phone-link';
 import { controllerUrl } from './phone-link';
@@ -39,6 +39,9 @@ export function formatMs(ms: number | null): string {
 export class Ui {
   onJoin: ((name: string, color: number) => void) | null = null;
   onReady: ((ready: boolean) => void) | null = null;
+  /** Countdown pip; `go` marks lights out. */
+  onBeep: ((go: boolean) => void) | null = null;
+  onMute: ((enabled: boolean) => void) | null = null;
 
   private readonly hud: Hud;
   private readonly screens: Screens;
@@ -64,9 +67,14 @@ export class Ui {
   private deadline = 0;
   /** When the current lap started, for the running lap clock. 0 = not racing. */
   private lapStart = 0;
+  /** Last countdown digit announced, so each one beeps exactly once. */
+  private lastPip: number | null = null;
+  /** Race distance in laps, from the server. */
+  private raceLaps = RACE_LAPS;
 
   constructor(parent: HTMLElement = document.body) {
     this.hud = new Hud(parent);
+    this.hud.onMute = (enabled) => this.onMute?.(enabled);
     this.screens = new Screens(parent);
     this.hud.setPanelsVisible(false);
   }
@@ -128,6 +136,7 @@ export class Ui {
       selfId: this.myId,
       selfColor: this.chosenColor,
       phone: this.phonePairing(),
+      raceLaps: this.raceLaps,
       ready: this.readyIntent,
       readyPending: this.readyConfirmed !== this.readyIntent,
       joinHint: location.host,
@@ -172,6 +181,7 @@ export class Ui {
         break;
 
       case 'countdown':
+        this.lastPip = null;
         this.screens.hide();
         this.hud.setPanelsVisible(true);
         this.hud.setBanner(timer === null ? 'GET READY' : String(Math.ceil(timer)));
@@ -219,7 +229,12 @@ export class Ui {
     const left = Math.max(0, (this.deadline - Date.now()) / 1000);
 
     if (this.phase === 'countdown') {
-      this.hud.setBanner(left > 0.05 ? String(Math.ceil(left)) : 'GO', left <= 0.05);
+      const digit = left > 0.05 ? Math.ceil(left) : 0;
+      if (digit !== this.lastPip) {
+        this.lastPip = digit;
+        this.onBeep?.(digit === 0);
+      }
+      this.hud.setBanner(left > 0.05 ? String(digit) : 'GO', left <= 0.05);
     } else if (this.phase === 'lobby') {
       this.hud.setBanner('');
       if (left <= 0) this.deadline = 0;
@@ -227,6 +242,36 @@ export class Ui {
   }
 
   // --- Race readouts -------------------------------------------------------
+
+  /**
+   * Live running order. Joins the server-ordered standings with the roster,
+   * which is the only place names and colours exist.
+   */
+  setStandings(rows: { id: number; position: number; lap: number; gapLeader: number }[]): void {
+    const board: StandingRow[] = rows.map((r) => {
+      const p = this.players.find((q) => q.id === r.id);
+      return {
+        id: r.id,
+        position: r.position,
+        name: p?.name ?? `Car ${r.id}`,
+        color: p?.color ?? 0,
+        lap: r.lap,
+        gapLeader: r.gapLeader,
+        isSelf: r.id === this.myId,
+      };
+    });
+    this.hud.setStandings(board);
+  }
+
+  /**
+   * Race distance, from the server's welcome. The shared RACE_LAPS is only a
+   * default: a server started with LAPS=1 was still being shown "1 / 3" for the
+   * whole first lap, because the total was not corrected until a lap completed.
+   */
+  setRaceLaps(laps: number): void {
+    this.raceLaps = laps;
+    this.state.totalLaps = laps;
+  }
 
   setPosition(position: number | null, of: number): void {
     this.state.position = position;
@@ -291,6 +336,7 @@ export class Ui {
 
   private resetLapTimes(): void {
     this.state.lap = 1;
+    this.state.totalLaps = this.raceLaps;
     this.state.lapTimeMs = 0;
     this.state.lastLapMs = null;
     this.state.bestLapMs = null;
@@ -303,7 +349,7 @@ export class Ui {
   showResults(results: ResultEntry[], myId: number): void {
     this.hud.setPanelsVisible(false);
     this.hud.setBanner('');
-    this.screens.showResults(results, myId);
+    this.screens.showResults(results, myId, this.raceLaps);
   }
 
   showDisconnected(reason: string): void {

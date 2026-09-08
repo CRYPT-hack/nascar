@@ -30,6 +30,11 @@ function el<K extends keyof HTMLElementTagNameMap>(
   return node;
 }
 
+/** "1 lap" / "3 laps". A results screen reading "1 laps" looks unfinished. */
+function laps(n: number): string {
+  return `${n} lap${n === 1 ? '' : 's'}`;
+}
+
 function swatch(colorIndex: number): HTMLSpanElement {
   const s = el('span', 'swatch');
   s.style.background = hex(CAR_COLORS[colorIndex] ?? 0xffffff);
@@ -48,6 +53,8 @@ export interface LobbyOptions {
   /** How the player joins — shown so the host can read it out at the venue. */
   joinHint?: string;
   phone?: PhonePairing;
+  /** Race distance, from the server rather than the shared default. */
+  raceLaps?: number;
   onReady(ready: boolean): void;
   onColor(colorIndex: number): void;
 }
@@ -87,7 +94,7 @@ export class Screens {
     const waiting = o.players.filter((p) => !p.ai && !p.ready).length;
 
     this.card.append(
-      el('h1', undefined, 'Interlagos — 3 laps'),
+      el('h1', undefined, `Interlagos — ${laps(o.raceLaps ?? RACE_LAPS)}`),
       el(
         'p',
         'sub',
@@ -164,19 +171,22 @@ export class Screens {
     if (o.ready) readyBtn.className = 'ghost';
     if (o.readyPending) readyBtn.classList.add('pending');
     readyBtn.addEventListener('click', () => o.onReady(!o.ready));
-    actions.append(readyBtn, el('span', 'hint', `First to ${RACE_LAPS} laps wins. Race starts when everyone is ready.`));
+    actions.append(
+      readyBtn,
+      el('span', 'hint', `First to ${laps(o.raceLaps ?? RACE_LAPS)} wins. Race starts when everyone is ready.`),
+    );
     this.card.append(actions);
 
     this.root.hidden = false;
   }
 
-  showResults(results: ResultEntry[], selfId: number, onContinue?: () => void): void {
+  showResults(results: ResultEntry[], selfId: number, raceLaps = RACE_LAPS, onContinue?: () => void): void {
     this.card.replaceChildren();
     const winner = results.find((r) => r.position === 1);
 
     this.card.append(
       el('h1', undefined, winner ? `${winner.name} wins` : 'Race over'),
-      el('p', 'sub', `${results.length} drivers · ${RACE_LAPS} laps · Interlagos`),
+      el('p', 'sub', `${results.length} drivers · ${laps(raceLaps)} · Interlagos`),
     );
 
     const table = el('table');
@@ -238,7 +248,7 @@ export class Screens {
     this.card.replaceChildren();
     this.card.append(
       el('h1', undefined, 'Interlagos'),
-      el('p', 'sub', `${RACE_LAPS} laps. Pick a name and a colour.`),
+      el('p', 'sub', 'Pick a name and a colour, then join the race.'),
     );
 
     const field = el('div', 'field');
