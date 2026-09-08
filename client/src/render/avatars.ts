@@ -22,6 +22,7 @@ export class AvatarStore {
   private readonly versions = new Map<number, number>();
   private timer: ReturnType<typeof setInterval> | null = null;
   private inFlight = false;
+  private warned = false;
 
   /** Called when a car's photo first arrives or is replaced. */
   onPhoto: ((id: number, texture: THREE.Texture) => void) | null = null;
@@ -55,9 +56,13 @@ export class AvatarStore {
         this.versions.set(id, version);
         await this.load(id, version);
       }
-    } catch {
-      // The server may not be up yet, or may not have this route. Either way
-      // the next tick tries again and the cars stay plain until then.
+    } catch (err) {
+      // The server may not be up yet. Reported once rather than every tick, so
+      // a real misconfiguration is visible without filling the console.
+      if (!this.warned) {
+        this.warned = true;
+        console.warn('driver photos unavailable:', err);
+      }
     } finally {
       this.inFlight = false;
     }

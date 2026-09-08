@@ -480,6 +480,24 @@ export class GameServer {
     }
 
     // --- driver photos ------------------------------------------------------
+    // These are reached cross-origin during development, where the pages are
+    // served by vite on 5173 and this server owns 8080. In the built demo
+    // everything is on one port and none of this applies — which is exactly why
+    // it is easy to miss until a dev session silently drops every upload.
+    // Open to any origin deliberately: it is a venue LAN, and the routes below
+    // are already bounded in size, type and count.
+    if (path === '/avatars' || path.startsWith('/avatar/')) {
+      res.setHeader('access-control-allow-origin', '*');
+      res.setHeader('access-control-allow-methods', 'GET, POST, PUT, OPTIONS');
+      res.setHeader('access-control-allow-headers', 'content-type');
+      if (req.method === 'OPTIONS') {
+        // An image/jpeg body is not a "simple" content type, so the browser
+        // preflights the upload.
+        res.writeHead(204).end();
+        return;
+      }
+    }
+
     // A car's photo, posted by that player's laptop once their phone has taken
     // it, and fetched by every other laptop so the whole grid sees it.
     const avatarMatch = /^\/avatar\/(\d+)$/.exec(path);

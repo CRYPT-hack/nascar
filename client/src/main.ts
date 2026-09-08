@@ -31,6 +31,8 @@ import { CAMERA_MODES, CAMERA_TUNING, ChaseCamera, type CameraMode } from './cam
 import { Connection, defaultServerUrl, netSimFromQuery } from './connection';
 import { InputSource } from './input';
 import { PhoneLink } from './phone-link';
+import * as THREE from 'three';
+
 import { AvatarStore as PhotoStore, avatarUrl } from './render/avatars';
 import { Sound } from './sound';
 import { NetStats } from './netstats';
@@ -81,6 +83,11 @@ class Game {
   private lastInput: CarInput = { ...NEUTRAL_INPUT };
   /** Race photo waiting to be published, if it arrived before the car id did. */
   private pendingPhoto: string | null = null;
+  /** Everyone's driver photos, polled from the server. */
+  private readonly photos = new PhotoStore();
+  /** Set once any car has a photo, so the billboard pass costs nothing before then. */
+  private photosVisible = false;
+  private readonly cameraWorld = new THREE.Vector3();
   private readonly stats = new NetStats();
   private readonly ui = new Ui();
   conn!: Connection;
@@ -158,6 +165,15 @@ class Game {
       this.pendingPhoto = dataUrl;
       void this.publishPhoto();
     };
+
+    // A photo can arrive before or after the car it belongs to has a view, so
+    // both directions are covered: new photos are applied here, and viewFor
+    // applies any photo already held when it builds a view.
+    this.photos.onPhoto = (id, texture) => {
+      this.views.get(id)?.setPhoto(texture);
+      this.photosVisible = true;
+    };
+    this.photos.start();
     this.phone.onChange = () => this.ui.setPhoneLink(this.phone.status, this.phone.code);
     this.ui.setPhoneLink(this.phone.status, this.phone.code);
 
@@ -570,6 +586,13 @@ class Game {
       cars: this.views.size,
     });
 
+    // Photos turn to face the viewer. Done here, after the cars have been posed
+    // and before the draw, so a billboard never lags a frame behind its car.
+    if (this.photosVisible) {
+      this.camera.camera.getWorldPosition(this.cameraWorld);
+      for (const v of this.views.values()) v.faceCamera(this.cameraWorld);
+    }
+
     this.scene.render(this.camera.camera);
   }
 
@@ -586,9 +609,13 @@ class Game {
     this.pendingPhoto = null;
     try {
       const body = await (await fetch(dataUrl)).blob();
-      await fetch(avatarUrl(this.myId), { method: 'POST', body });
-    } catch {
-      // A photo that fails to upload costs a plain car, not a race.
+      const res = await fetch(avatarUrl(this.myId), { method: 'POST', body });
+      if (!res.ok) throw new Error(`server said ${res.status}`);
+    } catch (err) {
+      // A failed upload costs a plain car, not a race — but it is said out
+      // loud. Swallowing it silently hid a CORS failure that dropped every
+      // photo in development while looking exactly like "nobody took one".
+      console.warn('race photo upload failed:', err);
     }
   }
 
@@ -598,6 +625,11 @@ class Game {
       v = new CarView(colorIndex, isLocal);
       this.views.set(id, v);
       this.scene.add(v.group);
+      const photo = this.photos.textureFor(id);
+      if (photo) {
+        v.setPhoto(photo);
+        this.photosVisible = true;
+      }
     }
     return v;
   }

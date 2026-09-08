@@ -21,6 +21,7 @@
  *   weave      full throttle, steering sweep
  *   brake      brake held; becomes reverse once stopped
  *   idle       neutral, to confirm the link without moving
+ *   photo      send a race photo, then idle — exercises the avatar path
  *
  * Every frame carries a sequence number that the laptop echoes back, so this
  * also reports the round trip phone -> relay -> laptop -> relay -> phone. That
@@ -91,8 +92,24 @@ function report(): void {
   rtt.length = 0;
 }
 
+/**
+ * A real 1x1 JPEG. Enough to prove the relay, the upload and the manifest;
+ * what it looks like is the browser's job to check, not this one's.
+ */
+const TEST_JPEG =
+  'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRof' +
+  'Hh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAARCAABAAEDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAA' +
+  'AAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2Jy' +
+  'ggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKj' +
+  'pKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/9oADAMBAAIRAxEAPwD3+iii' +
+  'gD//2Q==';
+
 ws.on('message', (raw) => {
   const msg = JSON.parse(String(raw)) as Record<string, unknown>;
+  if (msg['t'] === 'paired' && pattern === 'photo') {
+    console.log('paired. sending a race photo, then idling');
+    ws.send(JSON.stringify({ t: 'photo', data: TEST_JPEG }));
+  }
   if (msg['t'] === 'paired') {
     console.log(`paired. sending "${pattern}" at ${SEND_HZ} Hz — ctrl-c to stop`);
     const timer = setInterval(() => {
