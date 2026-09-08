@@ -28,6 +28,7 @@ const KEYS = {
   right: ['ArrowRight', 'KeyD'],
   handbrake: ['Space'],
   reset: ['KeyR'],
+  quality: ['KeyQ'],
 } as const;
 
 export class InputSource {
@@ -38,6 +39,7 @@ export class InputSource {
 
   /** Set for one frame when the player asks to be respawned. */
   resetRequested = false;
+  qualityRequested = false;
 
   /** True while the player is typing into a form, so driving keys are ignored. */
   suspended = false;
@@ -48,6 +50,7 @@ export class InputSource {
     if (this.isGameKey(e.code)) e.preventDefault();
     this.down.add(e.code);
     if (KEYS.reset.includes(e.code as never)) this.resetRequested = true;
+    if (KEYS.quality.includes(e.code as never)) this.qualityRequested = true;
   };
 
   private readonly onKeyUp = (e: KeyboardEvent): void => {
@@ -110,6 +113,12 @@ export class InputSource {
     const r = this.resetRequested;
     this.resetRequested = false;
     return r;
+  }
+
+  takeQualityRequest(): boolean {
+    const q = this.qualityRequested;
+    this.qualityRequested = false;
+    return q;
   }
 }
 

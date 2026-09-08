@@ -1335,3 +1335,58 @@ nothing happened is worse than no button.
 Ten checks in `roomtest` cover it: that it lands back on the track, the right
 way up, facing the right way, stationary, **without being granted lap
 progress**, and that a second press inside the cooldown is refused.
+
+---
+
+## Unplayable on the demo machine: it is the GPU, and there are tiers now
+
+Reported as "super laggy, unplayable" on the machine the demo runs on. Findings,
+in the order they mattered:
+
+**It is not the CPU and it is not the physics.** Per-frame client work measured
+about 2 ms in total: prediction step 0.78 ms, remote ghosts 0.09 ms, every pose
+and HUD update together under 0.1 ms, and issuing the draw 1.87 ms. The server
+has 71% headroom.
+
+**It is not the PGS change either, though I checked because I had claimed it was
+free.** That claim was measured on a two-car rig with almost no contacts, which
+was the wrong workload. On ten cars it costs **+0.43 ms of a 16.67 ms budget** -
+real, small, and not what makes a game unplayable.
+
+**It is the GPU.** The browser runs on **Intel UHD Graphics**, an integrated
+part, and the environment was tuned for something else: ~150k triangles, ~1400
+trees and ~1900 spectators, a 2048² soft-shadow map, MSAA, and a device pixel
+ratio of up to 2 - four times the pixels of 1. None of that is wrong on a
+discrete GPU. It is simply not a setting an integrated one can hold, and the
+game had no way to say so.
+
+`client/src/render/quality.ts` adds three tiers. Precedence is `?quality=` in
+the URL, then a remembered choice, then what the GPU name looks like; this
+machine auto-detects **low**.
+
+| | pixel ratio | shadows | shadow map | MSAA | scenery | fog |
+|---|---|---|---|---|---|---|
+| low | 0.7 | off | - | off | off | 900 m |
+| medium | 1 | on | 1024² | off | on | 1600 m |
+| high | 2 | on | 2048² | on | on | 2800 m |
+
+**Q** cycles them live. Everything but MSAA applies without a reload.
+
+### What I could not measure, and why I am not claiming a figure
+
+I could not get a trustworthy frame time. The browser pane in this session is
+hidden, which pauses `requestAnimationFrame` outright, and the only race I could
+run was on the same box as the server. The numbers that produced were
+incoherent - a *smaller* render target reading slower, hiding scenery reading
+six times slower - so they are worth nothing and are not recorded here.
+
+Two readings are sound, because they were interleaved so drift could not fake a
+winner, and because they agree across repeats: in the lobby at 1600x900, low
+renders in **0.31 ms** against high's **0.78 ms**. That is the right direction
+and about the right magnitude, but a lobby is not a race and I will not
+extrapolate it into an fps claim.
+
+One earlier number in this session was wrong and is worth flagging: a first pass
+reported shadows costing 5.35 ms of a 7.20 ms frame. That reading included
+one-off shader compilation and shadow-map allocation. In steady state the same
+scene was 1.44 ms total. Warm up before timing a GPU.

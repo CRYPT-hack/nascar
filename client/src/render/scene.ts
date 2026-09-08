@@ -13,6 +13,8 @@
 
 import * as THREE from 'three';
 
+import { QUALITY, type Quality } from './quality';
+
 /**
  * Metres. Beyond this the circuit fades into haze rather than popping out.
  *
@@ -72,13 +74,16 @@ function createSky(radius: number): THREE.Mesh {
 }
 
 /** Colour management, tone mapping and shadows. Shared by both entry points. */
-export function configureRenderer(renderer: THREE.WebGLRenderer): void {
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+export function configureRenderer(renderer: THREE.WebGLRenderer, quality: Quality): void {
+  const q = QUALITY[quality];
+  // Fill rate is the first thing an integrated GPU runs out of, and the pixel
+  // ratio is the biggest lever on it: at 2 this draws four times the pixels.
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, q.pixelRatio));
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   // ACES pulls midtones down hard, and a projector pulls them down again.
   renderer.toneMappingExposure = 1.2;
-  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.enabled = q.shadows;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 }
 
@@ -93,9 +98,13 @@ export function configureRenderer(renderer: THREE.WebGLRenderer): void {
 export function createEnvironment(
   scene: THREE.Scene,
   extent: number,
+  quality: Quality = 'high',
 ): { sun: THREE.DirectionalLight; followShadow(target: THREE.Vector3): void; skyRadius: number } {
+  const q = QUALITY[quality];
   const skyRadius = Math.max(2000, extent * 3);
-  scene.fog = new THREE.Fog(SKY_HORIZON.getHex(), FOG_NEAR, FOG_FAR);
+  // A nearer fog plane is not just atmosphere: it is what lets the far half of
+  // the circuit be culled rather than drawn.
+  scene.fog = new THREE.Fog(SKY_HORIZON.getHex(), FOG_NEAR, q.fogFar);
   scene.add(createSky(skyRadius));
 
   // Hemisphere fills the shadowed side. Without it the underside of a car and
@@ -105,7 +114,7 @@ export function createEnvironment(
   const sun = new THREE.DirectionalLight(0xfff2dd, 2.1);
   sun.position.set(-0.45, 1, 0.35).normalize().multiplyScalar(400);
   sun.castShadow = true;
-  sun.shadow.mapSize.set(2048, 2048);
+  sun.shadow.mapSize.set(q.shadowMapSize, q.shadowMapSize);
   // A tight frustum that follows the car: covering the whole circuit at this
   // map size would put one shadow texel every 40 cm and the cars would have no
   // recognisable shadow at all.
@@ -168,7 +177,7 @@ export function createSceneRig({ extent, canvas, capturable = false }: SceneOpti
     powerPreference: 'high-performance',
     preserveDrawingBuffer: capturable,
   });
-  configureRenderer(renderer);
+  configureRenderer(renderer, 'high');
   renderer.setSize(window.innerWidth, window.innerHeight);
 
   const scene = new THREE.Scene();

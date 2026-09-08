@@ -241,6 +241,10 @@ export class Ui {
     this.hud.onReset = fn;
   }
 
+  setNotice(text: string): void {
+    this.hud.setNotice(text);
+  }
+
   setResetVisible(on: boolean): void {
     this.hud.setResetVisible(on);
   }

@@ -437,3 +437,23 @@
   opacity: 0;
   visibility: hidden;
 }
+
+/* Transient notice, above the reset button so the two never collide. */
+.hud-notice {
+  position: absolute;
+  bottom: 74px;
+  left: 26px;
+  padding: 8px 14px;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: #cfd6e4;
+  background: rgba(18, 22, 33, 0.72);
+  border: 1px solid rgba(160, 175, 200, 0.28);
+  opacity: 0;
+  transition: opacity 220ms ease-out;
+}
+.hud-notice.on {
+  opacity: 1;
+}
