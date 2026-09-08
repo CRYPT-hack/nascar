@@ -159,6 +159,20 @@ sockets so Nagle cannot batch small control frames on the venue network.
 Tuning lives at the top of `client/src/controller.ts`: `MIN_CUTOFF` for how
 still it is when still, `BETA` for how fast it reacts when moving.
 
+The whole chain from tilting the phone to the car turning on screen:
+
+| stage | cost |
+|---|---|
+| One Euro filter on the phone | 17 ms to 63%, 33 ms to 90% |
+| phone → relay → laptop | ~1–2 ms on a LAN |
+| client input cadence (`INPUT_HZ` 30) | 0–33 ms, 17 ms average |
+| prediction applies it | immediate — the local car is not waiting on the server |
+
+So roughly **35 ms typical**, down from about 155 ms. The input cadence is the
+largest remaining term and belongs to the netcode rather than to this feature;
+it is tied to `TICKS_PER_INPUT` and to how prediction replays, and moving it
+would change results the hour-12 and hour-20 gates were measured against.
+
 To exercise the whole path without a phone in your hand — it also prints the
 round trip every five seconds:
 
