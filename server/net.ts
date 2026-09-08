@@ -364,6 +364,10 @@ export class GameServer {
           for (const one of msg.a) this.room.onInput(id, { t: 'input', ...one });
         }
         break;
+      case 'reset':
+        this.room.onReset(id);
+        break;
+
       case 'ready':
         this.room.onReady(id, msg.ready === true);
         break;

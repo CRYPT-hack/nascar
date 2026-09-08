@@ -20,7 +20,7 @@ import { FIXED_DT, GRAVITY, GROUP, interactionGroups } from '../shared/constants
 import type { CarInput } from '../shared/protocol';
 import type { TrackData } from '../shared/track-schema';
 import { Car, type CarContext } from '../vehicle/car';
-import { createRaceWorld, initPhysics, type RaceWorld } from '../vehicle/world';
+import { createRaceWorld, initPhysics, tuneSolver, type RaceWorld } from '../vehicle/world';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -50,12 +50,15 @@ const ok = (pass: boolean) => (pass ? 'ok' : 'FAIL');
 /** A 40 km flat plane, large enough that 30 s at top speed stays on it. */
 function flatWorld(): { world: RAPIER.World; ctx: CarContext } {
   const world = new RAPIER.World(GRAVITY);
-  world.timestep = FIXED_DT;
+  // Same solver settings as the game, from the same function.
+  tuneSolver(world);
   const ground = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
   world.createCollider(
     RAPIER.ColliderDesc.cuboid(20000, 1, 20000)
       .setTranslation(0, -1, 0)
       .setFriction(1)
+      .setRestitution(0)
+      .setRestitutionCombineRule(RAPIER.CoefficientCombineRule.Min)
       .setCollisionGroups(interactionGroups(GROUP.TRACK, GROUP.CAR | GROUP.BARRIER)),
     ground,
   );
@@ -86,6 +89,9 @@ class Rig {
         this.cars[k]!.step(inputs[k] ?? IN(), FIXED_DT, this.ctx);
       }
       this.world.step();
+      // postStep is part of the server's loop; leaving it out here measured a
+      // simulation nobody runs.
+      for (const c of this.cars) c.postStep();
       cb?.(i);
     }
   }

@@ -77,10 +77,14 @@ export class Hud {
   private readonly bestTime: HTMLElement;
   private readonly speedValue: HTMLDivElement;
   private readonly draft: HTMLDivElement;
+  private readonly resetButton: HTMLButtonElement;
   private readonly banner: HTMLDivElement;
 
   /** Last rendered values, so update() only touches the DOM on change. */
   private prev: Partial<Record<string, string | boolean>> = {};
+
+  /** Called when the player asks to be put back on the track. */
+  onReset: (() => void) | null = null;
 
   constructor(parent: HTMLElement = document.body) {
     this.root = el('div', 'hud');
@@ -112,7 +116,21 @@ export class Hud {
     this.draft = el('div', 'hud-draft', 'DRAFT');
     this.banner = el('div', 'hud-banner');
 
-    this.root.append(position, lap, this.times, speed, this.draft, this.banner);
+    // Recovery button. A player who has spun into the gravel facing backwards
+    // has no way out on a keyboard they are still learning, and the automatic
+    // rescue only fires for a car that is inverted or already stationary.
+    this.resetButton = document.createElement('button');
+    this.resetButton.className = 'hud-reset';
+    this.resetButton.type = 'button';
+    this.resetButton.textContent = 'Reset car  (R)';
+    this.resetButton.addEventListener('click', () => {
+      this.onReset?.();
+      // The canvas has the keyboard; keeping focus on the button would swallow
+      // the next steering input.
+      this.resetButton.blur();
+    });
+
+    this.root.append(position, lap, this.times, speed, this.draft, this.resetButton, this.banner);
     parent.append(this.root);
   }
 
@@ -176,6 +194,19 @@ export class Hud {
   }
 
   /** Hide the racing readouts but keep the banner, for the lobby and spectating. */
+  /** Shown only while there is a car to recover. */
+  setResetVisible(visible: boolean): void {
+    this.toggle('reset', this.resetButton, 'on', visible);
+  }
+
+  /** Briefly acknowledge, or refuse, a press. */
+  flashReset(accepted: boolean): void {
+    this.resetButton.classList.remove('accepted', 'refused');
+    // Restart the animation rather than letting a second press be swallowed.
+    void this.resetButton.offsetWidth;
+    this.resetButton.classList.add(accepted ? 'accepted' : 'refused');
+  }
+
   setPanelsVisible(visible: boolean): void {
     this.toggle('panels', this.root, 'panels-hidden', !visible);
   }

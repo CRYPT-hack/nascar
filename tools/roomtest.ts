@@ -17,6 +17,7 @@ import { fileURLToPath } from 'node:url';
 import {
   CLIENT_TIMEOUT_MS,
   COUNTDOWN_SECONDS,
+  RESET_COOLDOWN_SECONDS,
   RESULTS_SECONDS,
   TICK_HZ,
 } from '../shared/constants';
@@ -29,6 +30,8 @@ import { initPhysics } from '../vehicle/world';
 const here = dirname(fileURLToPath(import.meta.url));
 
 let failures = 0;
+const RESET_COOLDOWN_TICKS = RESET_COOLDOWN_SECONDS * TICK_HZ + 2;
+
 let checks = 0;
 
 function check(what: string, cond: boolean, detail = ''): void {
@@ -299,6 +302,50 @@ async function main(): Promise<void> {
     // sat in a lobby whose Ready button silently did nothing.
     room.onReady(a.id, true);
     check('a ready from the ghost changes nothing', room.state === 'lobby');
+    room.destroy();
+  }
+
+  // -------------------------------------------------------------------------
+  console.log('\nreset puts a car back on the line without gaining ground');
+  {
+    const { room } = makeRoom(track, { laps: 3 });
+    const a = room.join('Spinner', 0);
+    room.onReady(a.id, true);
+    run(room, 1 + 3 + COUNTDOWN_SECONDS + 1);
+    eq('racing', room.state, 'racing');
+
+    // Drive far enough to have real progress to protect, then wreck it:
+    // off the road, upside down, pointing backwards.
+    room.onInput(a.id, { t: 'input', seq: 1, throttle: 1, brake: 0, steer: 0, handbrake: false });
+    run(room, 6);
+    const before = a.hint;
+    const q = room.world.query;
+    const w = q.track.waypoints[before]!;
+    a.car!.reset({ x: w.p[0] + 12, y: w.p[1] + 0.4, z: w.p[2] + 12 }, q.headingAt(before) + Math.PI);
+    a.car!.body.setRotation({ x: 1, y: 0, z: 0, w: 0 }, true); // on its roof
+    run(room, 2);
+    check('the car really is inverted first', a.car!.up().y < 0);
+
+    check('the reset is accepted', room.onReset(a.id));
+    const p = a.car!.body.translation();
+    const loc = q.locate(p.x, p.y, p.z);
+    check('it lands back on the track', loc.onTrack, `lateral ${loc.lateral.toFixed(2)} m`);
+    check('the right way up', a.car!.up().y > 0.9, `up.y ${a.car!.up().y.toFixed(3)}`);
+
+    // Facing along the track, not against it.
+    const heading = q.headingAt(a.hint);
+    const fwd = a.car!.forward();
+    const want = { x: -Math.sin(heading), z: -Math.cos(heading) };
+    const dot = fwd.x * want.x + fwd.z * want.z;
+    check('and facing the right way', dot > 0.9, `dot ${dot.toFixed(3)}`);
+
+    check('it is stationary', a.car!.speed < 0.5, `${a.car!.speed.toFixed(2)} m/s`);
+    check('no lap progress was granted', a.lap.lap === 0);
+
+    // The cooldown is what stops it being tapped through every corner.
+    check('a second press straight away is refused', !room.onReset(a.id));
+    run(room, RESET_COOLDOWN_TICKS);
+    check('and allowed again once the cooldown passes', room.onReset(a.id));
     room.destroy();
   }
 

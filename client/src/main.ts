@@ -14,7 +14,7 @@
  * Physics never sees a variable dt. Rendering never waits for physics.
  */
 
-import { FIXED_DT, RACE_LAPS } from '../../shared/constants';
+import { FIXED_DT, RACE_LAPS, RESET_COOLDOWN_SECONDS } from '../../shared/constants';
 import {
   NEUTRAL_INPUT,
   type CarInput,
@@ -97,6 +97,8 @@ class Game {
   private lastFrame = 0;
   private fps = 60;
   private spawned = false;
+  /** Wall clock of the last reset we sent, for the client-side cooldown. */
+  private lastResetAt = -1e9;
 
   constructor() {
     this.canvas = document.getElementById('view') as HTMLCanvasElement;
@@ -125,6 +127,7 @@ class Game {
 
     this.ui.onJoin = (name, color) => this.connect(name, color);
     this.ui.onReady = (ready) => this.setReady(ready);
+    this.ui.onReset = () => this.requestReset();
     this.ui.showLobby();
 
     document.getElementById('boot')?.remove();
@@ -348,6 +351,10 @@ class Game {
     this.prediction.updateVisual(dt);
     if (this.conn) this.prediction.setRtt(this.conn.rtt);
     this.pumpReady(now);
+    // The R key set a flag that nothing ever read, so pressing it did nothing
+    // at all until now.
+    if (this.input.takeResetRequest()) this.requestReset();
+    this.ui.setResetVisible(this.canReset());
     this.ui.tick();
     this.draw(now, dt);
   }
@@ -360,6 +367,36 @@ class Game {
    * two must be the same value or the client is predicting an input it never
    * sent.
    */
+  /** Only when there is a car of our own to put back. */
+  private canReset(): boolean {
+    if (this.spectating || this.myId < 0) return false;
+    return this.state === 'racing' || this.state === 'countdown';
+  }
+
+  /**
+   * Ask the server to put us back on the racing line.
+   *
+   * Where the car goes is entirely the server's decision - it uses the last
+   * checkpoint this car actually reached - so this cannot gain track position,
+   * and there is nothing to predict locally. The next snapshot is adopted
+   * whole, the same as a grid reset, because the queued inputs describe a car
+   * that is no longer where they thought it was.
+   */
+  private requestReset(): void {
+    const now = performance.now();
+    // Mirrors the server's cooldown so a press it is going to refuse does not
+    // flash green here. The server still enforces it; this only keeps the
+    // button honest.
+    const cooled = now - this.lastResetAt >= RESET_COOLDOWN_SECONDS * 1000;
+    const allowed = cooled && this.canReset() && !!this.conn?.connected;
+    this.ui.flashReset(allowed);
+    if (!allowed) return;
+    this.lastResetAt = now;
+    this.conn!.send({ t: 'reset' });
+    this.spawned = false;
+    this.recentInputs.length = 0;
+  }
+
   private sampleAndSend(seq: number): CarInput {
     const racing = this.state === 'racing';
     const input = racing

@@ -110,3 +110,17 @@ carried no car, and the lobby's Ready button silently did nothing.
 
 Clients that do not recognise the code should treat it like any other error and
 show the message.
+
+## 2026-09-08 — Instance A — `ResetMsg`, and `RESET_COOLDOWN_SECONDS`
+
+Additive: one new client message and one new constant. No existing field, type
+or wire shape changes.
+
+`ClientMsg` gains `{ t: 'reset' }`. It carries nothing on purpose — where a car
+goes back to is the server's decision, taken from the last checkpoint that car
+actually reached, so the message cannot be used to gain track position.
+
+`RESET_COOLDOWN_SECONDS` (4) is shared because both ends need it: the server
+enforces the gap between resets, and the client mirrors it so the button can
+refuse a press honestly rather than flashing "accepted" at a request the server
+is about to discard.

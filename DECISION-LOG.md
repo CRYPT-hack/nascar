@@ -1234,3 +1234,104 @@ immediately:
   wrong**, so the test now states the polygon bound instead. Inscribed rather
   than circumscribed is deliberate - the tyre then never reads wider than the
   physics radius, and 5 mm of ride height at a flat is invisible.
+
+---
+
+## Car-to-car collision, measured and then changed
+
+Nothing measured contact between cars beyond "did anyone end up in the air",
+which is the one thing that was already fine. `tools/collisiontest.ts` now
+stages the four impacts a race actually produces and reports what came out.
+
+### What was wrong, and what was not
+
+The first suspicion was **penetration**: a 144 km/h rear-end overlapped the two
+hulls by 0.489 m, and a side swipe by 0.614 m. A third of a car buried in
+another looks broken.
+
+It is not worth fixing, and the reason is worth writing down. Sweeping every
+solver knob Rapier exposes - solver iterations to 12, internal PGS passes to 4,
+CCD substeps to 4, prediction distance from 2 mm to 100 mm - moved that number
+by less than a centimetre. It is not the solver failing. At 40 m/s a car covers
+**0.667 m in one 60 Hz step**, so the first frame that can possibly see the
+contact already has the hulls that deep inside each other. Measuring how long it
+lasts settles it: **1 to 3 frames, and zero by 250 ms.** It is a frame of
+overlap at 60 fps, not a pile-up.
+
+What *was* wrong is what the impact did afterwards.
+
+| | before | after |
+|---|---|---|
+| rear-end: hop | 0.185 m | **0.011 m** |
+| rear-end: yaw kick | 24 deg/s | **2 deg/s** |
+| rear-end: struck car shoved to | - | **86 km/h** |
+| T-bone: hop | 0.168 m | **0.000 m** |
+| T-bone: yaw kick | 70 deg/s | **5 deg/s** |
+| T-bone: attitude | up.y 0.956 | **up.y 0.999** |
+| head-on 108 km/h each: after | 0.6 / 0.6 km/h | **cars part** |
+| ten-car race: worst attitude | up.y 0.91 | **up.y 0.98** |
+| ten-car race: greatest height | 0.63 m | **0.20 m** |
+
+Two changes did that.
+
+**`numInternalPgsIterations` 1 → 4.** The default single pass is what let an
+impact hop and slew the struck car. Four settles it, and the step cost did not
+move measurably.
+
+**Car restitution 0.12 → 0.20, with combine rules.** At 0.12 a 144 km/h
+rear-end left the cars locked together and grinding, parting at 20.8 km/h -
+essentially perfectly inelastic. The catch is that restitution is one number
+serving three contacts, and Rapier averages it: raising it made the *road*
+springy under every wheel. So the track and the barriers now combine with
+**Min**, which keeps the car's value strictly for car-to-car.
+
+**0.30 read best on the rig and was still wrong.** It cost races: with cars
+bouncing that hard off the parked car on the grid, one of the five AI stopped
+completing its lap inside the time `roomtest` allows. That check is the reason
+the value is 0.20 and not higher, and it is exactly the kind of thing a rig
+alone would never have shown.
+
+### The harnesses were measuring a simulation nobody runs
+
+Two of them, both found while doing this:
+
+- `drivetest` stepped the cars and the world but **never called `postStep`**,
+  which is part of the server's loop and is what clamps rise and angular speed
+  after the solver.
+- `collisiontest` built its own flat world and so kept the **default solver
+  settings**, which is why it first reported a 0.279 m hop the game does not
+  produce.
+
+`tuneSolver()` is now exported from `vehicle/world.ts` and both the game and the
+harnesses call it, so the settings cannot drift apart again.
+
+Handling is unchanged, which is the point: 0-100 in **2.92 s**, braking
+**1.69 g**, skidpad **1.31 g** - identical to the baseline recorded before any
+of this. Ten AI still finish 10/10 on Interlagos.
+
+---
+
+## A reset button, and the key that never worked
+
+**`R` did nothing.** `InputSource.takeResetRequest()` existed and set a flag,
+and nothing anywhere read it. I had told the user the key worked; it had never
+worked.
+
+There is now a **Reset car (R)** button in the HUD, and the key drives the same
+path. Both ask the server; the client predicts nothing, because where the car
+goes back to is not the client's decision to make.
+
+The server puts the car at `hint` - the waypoint the lap tracker last placed
+that car at - facing along the track there, stationary, with its queued inputs
+dropped. So a reset returns a player **to their own progress facing forwards**.
+It cannot skip a corner and it cannot cut the circuit, which is the property
+that matters when the button is one keypress away for ten strangers.
+
+`RESET_COOLDOWN_SECONDS` (4 s) is in `/shared/` because both ends need it: the
+server enforces it, and the client mirrors it so a press the server is about to
+throw away flashes red instead of green. A button that says "accepted" when
+nothing happened is worse than no button.
+
+Ten checks in `roomtest` cover it: that it lands back on the track, the right
+way up, facing the right way, stationary, **without being granted lap
+progress**, and that a second press inside the cooldown is refused.

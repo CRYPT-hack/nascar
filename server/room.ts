@@ -15,6 +15,7 @@ import {
   INPUT_HZ,
   MAX_PLAYERS,
   RACE_LAPS,
+  RESET_COOLDOWN_SECONDS,
   RESULTS_SECONDS,
   TICK_HZ,
   TICKS_PER_SNAPSHOT,
@@ -164,6 +165,8 @@ export interface Entrant {
   finishTick: number;
   lastSeenMs: number;
   stuckTicks: number;
+  /** Tick of the last manual reset, for the cooldown. */
+  resetTick: number;
   spawnSlot: number;
 }
 
@@ -263,6 +266,7 @@ export class Room {
       finishTick: -1,
       lastSeenMs: Date.now(),
       stuckTicks: 0,
+      resetTick: -1e9,
       spawnSlot: slot,
     };
     this.entrants.set(id, e);
@@ -342,6 +346,38 @@ export class Room {
       this.inputHealth.overflowed += e.pending.length - INPUT_HZ;
       e.pending.splice(0, e.pending.length - INPUT_HZ);
     }
+  }
+
+  /**
+   * Put a car back on the racing line where it already was.
+   *
+   * The position comes from `hint`, the waypoint the lap tracker last placed
+   * this car at, and the heading from the track at that waypoint. So a reset
+   * returns a player to their own progress facing forwards - it cannot skip a
+   * corner, and it cannot be used to cut the circuit.
+   *
+   * Returns false when it was refused, so the caller can tell the player why
+   * nothing happened rather than leaving them pressing a dead button.
+   */
+  onReset(id: number): boolean {
+    const e = this.entrants.get(id);
+    if (!e || e.ai || !e.car) return false;
+    e.lastSeenMs = Date.now();
+    // Only mid-race: on the grid or in the results there is nothing to recover
+    // from, and the grid positions cars itself.
+    if (this.state !== 'racing' && this.state !== 'countdown') return false;
+    if (e.finished) return false;
+    if (this.tick - e.resetTick < RESET_COOLDOWN_SECONDS * TICK_HZ) return false;
+
+    e.resetTick = this.tick;
+    const q = this.world.query;
+    const w = q.track.waypoints[e.hint]!;
+    e.car.reset({ x: w.p[0], y: w.p[1] + 0.6, z: w.p[2] }, q.headingAt(e.hint));
+    e.stuckTicks = 0;
+    // Anything queued describes a car that no longer exists at that position.
+    e.pending.length = 0;
+    e.current = { ...NEUTRAL_INPUT };
+    return true;
   }
 
   onReady(id: number, ready: boolean): void {

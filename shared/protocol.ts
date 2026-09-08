@@ -66,12 +66,23 @@ export interface ReadyMsg {
 }
 
 /** Keepalive / RTT probe. Server echoes as `pong`. */
+/**
+ * Put me back on the racing line, facing the right way.
+ *
+ * Carries nothing: where a car goes back to is the server's decision, taken
+ * from the last checkpoint that car actually reached, so this can never be
+ * used to gain track position.
+ */
+export interface ResetMsg {
+  t: 'reset';
+}
+
 export interface PingMsg {
   t: 'ping';
   ts: number; // client clock, ms
 }
 
-export type ClientMsg = HelloMsg | InputMsg | InputBatchMsg | ReadyMsg | PingMsg;
+export type ClientMsg = HelloMsg | InputMsg | InputBatchMsg | ReadyMsg | ResetMsg | PingMsg;
 
 // ---------------------------------------------------------------------------
 // Server -> client

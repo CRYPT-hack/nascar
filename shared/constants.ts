@@ -65,6 +65,17 @@ export const COUNTDOWN_SECONDS = 5;
 export const RESULTS_SECONDS = 20;
 
 /**
+ * Minimum gap between manual resets.
+ *
+ * Shared because both ends need it: the server enforces it, and the client
+ * mirrors it so the button can refuse a press honestly instead of flashing
+ * "accepted" at a request the server is about to throw away. Long enough that
+ * it cannot be tapped through a corner as a free racing line, short enough to
+ * be no worse than waiting for the automatic rescue.
+ */
+export const RESET_COOLDOWN_SECONDS = 4;
+
+/**
  * A client is dropped if no message arrives for this long.
  * Generous — hackathon wifi.
  */

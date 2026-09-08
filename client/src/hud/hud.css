@@ -390,3 +390,50 @@
     font-size: 58px;
   }
 }
+
+/* Recovery button. Bottom-left, clear of the speed panel on the right and of
+   the draft badge in the middle. */
+.hud-reset {
+  position: absolute;
+  bottom: 26px;
+  left: 26px;
+  padding: 10px 16px;
+  border-radius: 12px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: #dfe4ee;
+  background: rgba(18, 22, 33, 0.72);
+  border: 1px solid rgba(160, 175, 200, 0.35);
+  cursor: pointer;
+  pointer-events: auto;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 140ms ease-out, background 120ms ease-out;
+}
+.hud-reset.on {
+  opacity: 1;
+  visibility: visible;
+}
+.hud-reset:hover {
+  background: rgba(32, 40, 58, 0.85);
+}
+.hud-reset.accepted {
+  animation: hud-reset-accepted 420ms ease-out;
+}
+.hud-reset.refused {
+  animation: hud-reset-refused 420ms ease-out;
+}
+@keyframes hud-reset-accepted {
+  0% { background: rgba(48, 209, 88, 0.75); }
+  100% { background: rgba(18, 22, 33, 0.72); }
+}
+@keyframes hud-reset-refused {
+  0% { background: rgba(255, 59, 48, 0.6); }
+  100% { background: rgba(18, 22, 33, 0.72); }
+}
+.hud.panels-hidden .hud-reset {
+  opacity: 0;
+  visibility: hidden;
+}
