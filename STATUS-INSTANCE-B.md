@@ -110,12 +110,29 @@ filter, at 89 ms to 63% of a steering step and 138 ms to 90%. A One Euro filter
 took that to 17 ms and 33 ms while still rejecting hand tremor completely.
 Frames now go out on each sensor reading rather than on a 40 Hz timer.
 
+### ~~Audio~~ — done
+
+Synthesised in the Web Audio graph, no files: engine through a five-speed
+gearbox, wind by speed, tyre noise coloured by the surface under the car,
+countdown pips, and impacts derived from a sudden loss of speed. Starts on the
+join or ready click, because browsers refuse otherwise, and there is a SOUND
+toggle in the HUD.
+
+### ~~Live leaderboard~~ — done
+
+The standings were already computed from every snapshot and discarded. They are
+now a live running order: place, colour, name, metres to the leader, local car
+picked out. Rows are mutated rather than rebuilt, so a 30 Hz update does not
+thrash layout.
+
+### ~~Car visuals~~ — Instance A took this
+
+A landed a car model ("Give the car a face"), so the ownership question in
+earlier versions of this document is settled.
+
 ### Not started, in my scope
 
-| Item | Notes |
-|---|---|
-| Audio | `/assets/` is mine per §4, but audio is in neither the §4 bullets nor the §6 plan. Unclaimed by either instance. A silent racing game demos noticeably worse. |
-| Car visuals and liveries | Ownership ambiguous. A owns `/vehicle/` physics; car *meshes and liveries* are assigned to nobody. `CAR_COLORS` already sits in `/shared/`. If nobody takes it, the cars are placeholder shapes at the demo. |
+Nothing outstanding.
 
 ### Deliberately not built
 
@@ -138,6 +155,13 @@ Frames now go out on each sensor reading rather than on a 40 Hz timer.
 - 0 trees or spectators inside the barrier line, checked against the sampler.
 - HUD values, lobby roster and results table read correctly from the DOM.
 - Both circuits load, switch and rebuild scenery without error.
+- A full race run to completion against a live server with a phone driving:
+  lobby → grid → countdown → racing → finished → results, with real data
+  ("CPU 1 wins", correct order, formatted lap times, DNF for the car that spent
+  the race in a barrier) and back to the lobby. Zero console errors.
+- Live running order tracking positions and gaps through a race; engine pitch
+  following road speed across the gearbox; countdown pips firing once each.
+- All seven HUD elements checked for pairwise overlap: none.
 - Phone control latency: 0.9 ms mean / 2.0 ms p95 transport round trip, and a
   steering step reaching 90% in 33 ms after the filter change, down from 138 ms.
   Hand tremor of ±0.4° still produces exactly zero steering.
@@ -151,9 +175,7 @@ Frames now go out on each sensor reading rather than on a 40 Hz timer.
 
 **Not verified:**
 
-- Nobody has driven a full three-lap race to a results screen by hand. The
-  lobby → grid → countdown → racing path is verified; `finished` and the results
-  table have only been seen with placeholder data.
+- Frame timings and latency figures are from this machine only.
 - **The controller has never run on a real phone.** Everything was verified with
   synthetic `deviceorientation` events on desktop and a node client. The tilt
   ranges, the deadzone and the smoothing are reasoned defaults, not tuned
