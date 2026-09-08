@@ -89,6 +89,27 @@ worst height difference 0.00000 m, worst barrier offset difference 0.0000 m.
 
 The physics builder owns those numbers. If they ever change, change both files.
 
+### ~~Phone as steering wheel~~ — done
+
+Players can steer with a phone's motion sensors over Wi-Fi. Pairing relay on
+`/pair`, controller page at `/controller.html`, code shown in the lobby.
+
+Bluetooth was ruled out, not skipped: Web Bluetooth only drives BLE peripherals
+over GATT and a phone browser cannot be one, so it would need a native app.
+
+`shared/protocol.ts` is untouched — a phone frame joins the laptop's input
+pipeline like a gamepad, so the netcode never learns it exists.
+
+`npm run certs` is required for it: mobile browsers only expose motion sensors
+in a secure context, and over plain http the page loads and no event ever fires.
+Without certs the server serves http exactly as before.
+
+Latency was measured rather than guessed, and the guess would have been wrong.
+The transport is 0.9 ms mean round trip; the delay was the phone's own smoothing
+filter, at 89 ms to 63% of a steering step and 138 ms to 90%. A One Euro filter
+took that to 17 ms and 33 ms while still rejecting hand tremor completely.
+Frames now go out on each sensor reading rather than on a 40 Hz timer.
+
 ### Not started, in my scope
 
 | Item | Notes |
@@ -117,6 +138,13 @@ The physics builder owns those numbers. If they ever change, change both files.
 - 0 trees or spectators inside the barrier line, checked against the sampler.
 - HUD values, lobby roster and results table read correctly from the DOM.
 - Both circuits load, switch and rebuild scenery without error.
+- Phone control latency: 0.9 ms mean / 2.0 ms p95 transport round trip, and a
+  steering step reaching 90% in 33 ms after the filter change, down from 138 ms.
+  Hand tremor of ±0.4° still produces exactly zero steering.
+- Phone control end to end: a simulated phone drove the car from 0 to 77 km/h
+  over the relay, and killing it mid-drive released the throttle immediately
+  rather than holding the last input. Angle mapping checked against hand
+  calculations at several tilts. HTTPS and WSS verified with generated certs.
 - A live ten-car grid: positions render correctly through the HUD (P6/10,
   updating as the field moves), and the frame budget holds at **6.9 ms median,
   7.7 ms p95** with ten cars, prediction and interpolation — inside 16.67 ms.
@@ -126,6 +154,13 @@ The physics builder owns those numbers. If they ever change, change both files.
 - Nobody has driven a full three-lap race to a results screen by hand. The
   lobby → grid → countdown → racing path is verified; `finished` and the results
   table have only been seen with placeholder data.
+- **The controller has never run on a real phone.** Everything was verified with
+  synthetic `deviceorientation` events on desktop and a node client. The tilt
+  ranges, the deadzone and the smoothing are reasoned defaults, not tuned
+  against a hand — expect to adjust `STEER_RANGE`, `THROTTLE_RANGE` and
+  `BRAKE_RANGE` in `client/src/controller.ts` after one lap on real hardware.
+  The forward-tilt direction has a "Tilt: normal/flipped" toggle on the phone
+  precisely because that sign is the most likely thing to be wrong per device.
 - Never tested in Safari (§9 warns its WebGL and audio differ).
 - Never tested on a projector, which is what the contrast and fog were tuned for.
 - Frame timings are from this machine only.

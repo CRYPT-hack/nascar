@@ -45,6 +45,9 @@ async function main(): Promise<void> {
     aiFill,
     // dist first so a built client wins, then public for the track JSON.
     staticDirs: [resolve(root, 'dist'), resolve(root, 'public')],
+    // Serves https when certs/ holds a key pair, so phone controllers can read
+    // their motion sensors. Falls back to http silently when it does not.
+    tlsRoot: root,
   });
 
   console.log(`track ${track.name}: ${track.lapLengthMeters} m, ${laps} laps`);

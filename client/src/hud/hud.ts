@@ -11,6 +11,7 @@
  * 60 Hz update loop does not thrash layout.
  */
 
+import { CAR_COLORS } from '../../../shared/constants';
 import './hud.css';
 
 export interface HudState {
@@ -28,6 +29,19 @@ export interface HudState {
   lastWasBest: boolean;
   speedKph: number;
   drafting: boolean;
+}
+
+/** One row of the live leaderboard. */
+export interface StandingRow {
+  id: number;
+  position: number;
+  name: string;
+  /** Index into CAR_COLORS. */
+  color: number;
+  lap: number;
+  /** Metres behind the leader; 0 for the leader itself. */
+  gapLeader: number;
+  isSelf: boolean;
 }
 
 export function initialHudState(totalLaps: number, fieldSize: number): HudState {
@@ -81,6 +95,16 @@ export class Hud {
   private readonly notice: HTMLDivElement;
   private noticeTimer = 0;
   private readonly banner: HTMLDivElement;
+  private readonly board: HTMLDivElement;
+  private readonly muteButton: HTMLButtonElement;
+  private muted = false;
+  /** Called with the new enabled state when the player toggles sound. */
+  onMute: ((enabled: boolean) => void) | null = null;
+  /** Live row elements by car id, so a 30 Hz update does not rebuild the list. */
+  private readonly boardRows = new Map<
+    number,
+    { row: HTMLElement; pos: HTMLElement; name: HTMLElement; gap: HTMLElement }
+  >();
 
   /** Last rendered values, so update() only touches the DOM on change. */
   private prev: Partial<Record<string, string | boolean>> = {};
@@ -134,7 +158,31 @@ export class Hud {
 
     this.notice = el('div', 'hud-notice');
 
-    this.root.append(position, lap, this.times, speed, this.draft, this.resetButton, this.notice, this.banner);
+    this.muteButton = el('button', 'hud-mute', 'SOUND ON');
+    this.muteButton.type = 'button';
+    this.muteButton.addEventListener('click', () => {
+      this.muted = !this.muted;
+      this.muteButton.textContent = this.muted ? 'SOUND OFF' : 'SOUND ON';
+      this.muteButton.classList.toggle('off', this.muted);
+      this.onMute?.(!this.muted);
+    });
+
+    this.board = el('div', 'hud-panel hud-board');
+    this.board.append(el('div', 'hud-label', 'Running order'));
+    this.board.hidden = true;
+
+    this.root.append(
+      position,
+      lap,
+      this.times,
+      speed,
+      this.draft,
+      this.resetButton,
+      this.notice,
+      this.banner,
+      this.board,
+      this.muteButton,
+    );
     parent.append(this.root);
   }
 
@@ -181,6 +229,62 @@ export class Hud {
     this.set('speed', this.speedValue, String(Math.max(0, Math.round(s.speedKph))));
     this.toggle('draft', this.draft, 'on', s.drafting);
 
+  }
+
+  /**
+   * Live running order.
+   *
+   * Rows are kept and mutated rather than rebuilt: this arrives at snapshot
+   * rate, and replacing ten rows of DOM thirty times a second is a layout
+   * thrash that shows up as stutter on the car, not on the list.
+   */
+  setStandings(rows: StandingRow[]): void {
+    const seen = new Set<number>();
+
+    for (const r of rows) {
+      seen.add(r.id);
+      let cells = this.boardRows.get(r.id);
+      if (!cells) {
+        const row = el('div', 'board-row');
+        const pos = el('span', 'board-pos');
+        const swatch = el('span', 'board-swatch');
+        swatch.style.background = `#${(CAR_COLORS[r.color] ?? 0xffffff).toString(16).padStart(6, '0')}`;
+        const name = el('span', 'board-name');
+        const gap = el('span', 'board-gap');
+        row.append(pos, swatch, name, gap);
+        cells = { row, pos, name, gap };
+        this.boardRows.set(r.id, cells);
+        this.board.append(row);
+      }
+      this.set(`bp${r.id}`, cells.pos, String(r.position));
+      this.set(`bn${r.id}`, cells.name, r.name);
+      // The leader shows its lap; everyone else shows how far back they are.
+      // A gap in metres needs no reference speed to be true.
+      this.set(
+        `bg${r.id}`,
+        cells.gap,
+        // `lap` counts laps *completed*, like LapMsg, so the lap being driven
+        // is one more — matching the lap counter in the corner.
+        r.position === 1
+          ? `L${r.lap + 1}`
+          : `+${r.gapLeader < 1000 ? Math.round(r.gapLeader) : Math.round(r.gapLeader / 100) / 10 + 'k'}m`,
+      );
+      this.toggle(`bs${r.id}`, cells.row, 'me', r.isSelf);
+      // Order is set by the position, so a car that gains a place slides up
+      // without the list being rebuilt around it.
+      const order = String(r.position);
+      if (this.prev[`bo${r.id}`] !== order) {
+        this.prev[`bo${r.id}`] = order;
+        cells.row.style.order = order;
+      }
+    }
+
+    for (const [id, cells] of this.boardRows) {
+      if (seen.has(id)) continue;
+      cells.row.remove();
+      this.boardRows.delete(id);
+    }
+    this.board.hidden = rows.length === 0;
   }
 
   /**

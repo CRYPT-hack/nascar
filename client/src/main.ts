@@ -18,6 +18,7 @@ import { FIXED_DT, RACE_LAPS, RESET_COOLDOWN_SECONDS } from '../../shared/consta
 import {
   NEUTRAL_INPUT,
   type CarInput,
+  type CarSnap,
   type InputMsg,
   type RaceState,
   type ServerMsg,
@@ -29,6 +30,8 @@ import { createRaceWorld, initPhysics, type RaceWorld } from '../../vehicle/worl
 import { ChaseCamera } from './camera';
 import { Connection, defaultServerUrl, netSimFromQuery } from './connection';
 import { InputSource } from './input';
+import { PhoneLink } from './phone-link';
+import { Sound } from './sound';
 import { NetStats } from './netstats';
 import { INPUT_REDUNDANCY, PredictedCar } from './prediction';
 import { recordingRequested, startRecording } from './record';
@@ -68,6 +71,13 @@ class Game {
   prediction!: PredictedCar;
   remote!: RemoteCars;
   readonly input = new InputSource();
+  /** Phone-as-steering-wheel. Feeds `input` like a gamepad; null when absent. */
+  readonly phone = new PhoneLink();
+  readonly sound = new Sound();
+  /** Surface under the local car, from the last snapshot. Drives tyre noise. */
+  private surface: CarSnap['surface'] = 'asphalt';
+  /** Last input actually sent, so the audio can hear throttle and brake. */
+  private lastInput: CarInput = { ...NEUTRAL_INPUT };
   private readonly stats = new NetStats();
   private readonly ui = new Ui();
   conn!: Connection;
@@ -127,8 +137,25 @@ class Game {
     this.resize();
     addEventListener('resize', () => this.resize());
 
-    this.ui.onJoin = (name, color) => this.connect(name, color);
-    this.ui.onReady = (ready) => this.setReady(ready);
+    // A phone frame overrides the keyboard while one is live, and returns null
+    // the moment it goes stale, so a phone leaving Wi-Fi hands back to the keys
+    // rather than holding the last steering angle into a wall.
+    this.input.external = () => this.phone.current();
+    this.phone.onChange = () => this.ui.setPhoneLink(this.phone.status, this.phone.code);
+    this.ui.setPhoneLink(this.phone.status, this.phone.code);
+
+    this.ui.onJoin = (name, color) => {
+      // Browsers refuse to start audio outside a user gesture, and this is the
+      // first one the game is guaranteed to get.
+      this.sound.resume();
+      this.connect(name, color);
+    };
+    this.ui.onReady = (ready) => {
+      this.sound.resume();
+      this.setReady(ready);
+    };
+    this.ui.onBeep = (go) => this.sound.beep(go);
+    this.ui.onMute = (on) => this.sound.setEnabled(on);
     this.ui.onReset = () => this.requestReset();
     this.ui.showLobby();
 
@@ -212,6 +239,7 @@ class Game {
         this.myId = msg.id;
         this.myColor = msg.color;
         this.laps = msg.laps;
+        this.ui.setRaceLaps(msg.laps);
         this.ui.showRoster([], this.myId);
         break;
 
@@ -302,6 +330,8 @@ class Game {
       this.camera.reset();
     }
     this.ui.setPosition(this.standings.positionOf(this.myId), rows.length);
+    this.ui.setStandings(rows);
+    this.surface = mine.surface;
 
     if (!this.spawned) {
       // First state we have ever had for this car, or the first after a grid
@@ -425,6 +455,7 @@ class Game {
       ? this.input.sample(FIXED_DT * 2)
       : { ...NEUTRAL_INPUT };
 
+    this.lastInput = input;
     this.recentInputs.push({ seq, ...input });
     if (this.recentInputs.length > INPUT_REDUNDANCY) this.recentInputs.shift();
 
@@ -476,7 +507,16 @@ class Game {
     } else {
       const v = this.prediction.car.body.linvel();
       this.camera.update(dt, localPos, localRot, { x: v.x, y: v.y, z: v.z } as V3);
-      this.ui.setSpeed(this.prediction.car.speed * 3.6);
+      const kph = this.prediction.car.speed * 3.6;
+      this.ui.setSpeed(kph);
+      this.sound.update({
+        speedKph: kph,
+        throttle: this.lastInput.throttle,
+        brake: this.lastInput.brake,
+        surface: this.surface,
+        // Off the asphalt at speed is the scrub the tyre voice wants.
+        sliding: this.surface !== 'asphalt' && kph > 30,
+      });
     }
     this.stats.update({
       fps: this.fps,

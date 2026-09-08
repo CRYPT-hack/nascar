@@ -11,8 +11,9 @@
  */
 
 import { createReadStream, existsSync, statSync } from 'node:fs';
-import { appendFileSync } from 'node:fs';
+import { appendFileSync, readFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { createServer as createHttpsServer } from 'node:https';
 import { networkInterfaces } from 'node:os';
 import { extname, join, normalize, resolve } from 'node:path';
 
@@ -21,7 +22,33 @@ import { WebSocketServer, type WebSocket } from 'ws';
 import { DEFAULT_PORT, PROTOCOL_VERSION, TICK_HZ } from '../shared/constants';
 import type { ClientMsg, ServerMsg } from '../shared/protocol';
 import type { TrackData } from '../shared/track-schema';
+import { RemoteControlHub } from './remote-control';
 import { Room, type RoomOptions } from './room';
+
+/**
+ * Optional TLS material for phone controllers.
+ *
+ * Mobile browsers only expose motion sensors in a secure context: Chrome blocks
+ * `deviceorientation` outside one, and iOS needs `requestPermission()`, which
+ * needs one too. Over plain http on a LAN address the controller page loads and
+ * the sensors simply never fire — which at a venue looks like a broken feature
+ * rather than a missing certificate.
+ *
+ * So: if `certs/dev-key.pem` and `certs/dev-cert.pem` exist the server speaks
+ * HTTPS and WSS, otherwise it behaves exactly as before. `npm run certs`
+ * generates them. Absent certs, the keyboard still works and nothing else
+ * changes, so no existing tooling is affected by this file being here.
+ */
+function readTls(root: string): { key: Buffer; cert: Buffer } | null {
+  try {
+    return {
+      key: readFileSync(resolve(root, 'certs/dev-key.pem')),
+      cert: readFileSync(resolve(root, 'certs/dev-cert.pem')),
+    };
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Transport ping interval. Comfortably under CLIENT_TIMEOUT_MS so a client has
@@ -47,6 +74,8 @@ export interface ServerOptions extends RoomOptions {
   /** Directories searched, in order, for static files. */
   staticDirs?: string[];
   trackUrl?: string;
+  /** Project root, searched for optional TLS material. Omit to stay on http. */
+  tlsRoot?: string;
 }
 
 export class GameServer {
@@ -64,6 +93,9 @@ export class GameServer {
   /** Set by RECORD=<file>. Absent means every telemetry path is inert. */
   private readonly recordTo = process.env['RECORD'] ?? '';
   private fatalReported = false;
+  /** Phone-as-steering-wheel pairing, on the `/pair` path. */
+  readonly remote = new RemoteControlHub();
+  readonly secure: boolean;
 
   constructor(track: TrackData, opts: ServerOptions = {}) {
     this.port = opts.port ?? DEFAULT_PORT;
@@ -89,9 +121,28 @@ export class GameServer {
       opts,
     );
 
-    this.http = createServer((req, res) => this.serveStatic(req, res));
+    const tls = opts.tlsRoot ? readTls(opts.tlsRoot) : null;
+    this.secure = tls !== null;
+    this.http = tls
+      ? (createHttpsServer(tls, (req, res) => this.serveStatic(req, res)) as unknown as ReturnType<typeof createServer>)
+      : createServer((req, res) => this.serveStatic(req, res));
     this.wss = new WebSocketServer({ server: this.http });
-    this.wss.on('connection', (ws) => this.onConnection(ws));
+    this.wss.on('connection', (ws, req) => {
+      // Phone controllers share the port but not the protocol: they get their
+      // own path and their own tiny message set, so shared/protocol.ts stays
+      // frozen and the game's message handling is untouched.
+      const path = (req.url ?? '/').split('?')[0];
+      if (path === '/pair') {
+        // Control frames are tiny and frequent, which is exactly the shape
+        // Nagle's algorithm holds back waiting for more to send. Node's http
+        // server defaults noDelay to true on recent versions, but the cost of
+        // being wrong here is tens of milliseconds of steering lag on the venue
+        // network, and the cost of setting it anyway is nothing.
+        (ws as unknown as { _socket?: { setNoDelay(v: boolean): void } })._socket?.setNoDelay(true);
+        this.remote.accept(ws);
+      }
+      else this.onConnection(ws);
+    });
   }
 
   // -------------------------------------------------------------------------
@@ -118,9 +169,14 @@ export class GameServer {
     this.http.on('error', onFatal);
     this.wss.on('error', onFatal);
 
+    this.remote.start();
     this.http.listen(this.port, '0.0.0.0', () => {
+      const scheme = this.secure ? 'https' : 'http';
       console.log(`race server listening on 0.0.0.0:${this.port}`);
-      for (const a of localAddresses()) console.log(`  http://${a}:${this.port}`);
+      for (const a of localAddresses()) console.log(`  ${scheme}://${a}:${this.port}`);
+      if (!this.secure) {
+        console.log('  (http: phone controllers cannot read motion sensors — run `npm run certs`)');
+      }
       if (this.staticDirs.length === 0) {
         console.log('  (no static dirs configured - run vite separately for the client)');
       }
@@ -139,6 +195,7 @@ export class GameServer {
     this.recorder = null;
     for (const ws of this.sockets.values()) ws.close();
     await new Promise<void>((r) => this.wss.close(() => r()));
+    this.remote.stop();
     await new Promise<void>((r) => this.http.close(() => r()));
     this.room.destroy();
   }

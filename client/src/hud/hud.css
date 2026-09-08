@@ -391,6 +391,70 @@
   }
 }
 
+/* --- Phone controller pairing card --------------------------------------- */
+
+.phone-card {
+  margin-top: 22px;
+  padding: 16px 18px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--edge);
+}
+
+.phone-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.phone-head .dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #6b7683;
+  flex: 0 0 auto;
+}
+.phone-head .dot.ok {
+  background: #30d158;
+}
+.phone-head .dot.warn {
+  background: var(--accent);
+}
+.phone-head .dot.bad {
+  background: #ff453a;
+}
+
+.phone-body {
+  margin-top: 12px;
+}
+
+.phone-code {
+  font-size: 44px;
+  font-weight: 800;
+  letter-spacing: 0.22em;
+  line-height: 1.1;
+  color: var(--accent);
+}
+
+.phone-sub {
+  margin-top: 6px;
+  color: var(--dim);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.phone-url {
+  color: var(--ink);
+  font-weight: 600;
+  /* An address is read character by character off a screen; a monospace face
+     stops 1/l and 0/O being guessed at. */
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  word-break: break-all;
+}
+
 /* Recovery button. Bottom-left, clear of the speed panel on the right and of
    the draft badge in the middle. */
 .hud-reset {
@@ -456,4 +520,104 @@
 }
 .hud-notice.on {
   opacity: 1;
+}
+
+/* --- Live running order --------------------------------------------------- */
+
+.hud-board {
+  /* Under the position panel on the left, clear of the centre timing panel. */
+  top: 128px;
+  left: 20px;
+  min-width: 208px;
+  display: flex;
+  flex-direction: column;
+  padding: 9px 12px 10px;
+}
+
+.hud-board[hidden] {
+  display: none;
+}
+
+.board-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+  font-size: 13px;
+  line-height: 1.35;
+  color: var(--dim);
+}
+
+.board-row.me {
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.board-pos {
+  width: 15px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.75;
+}
+
+.board-swatch {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  flex: 0 0 auto;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+.board-name {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.board-gap {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.8;
+}
+
+@media (max-width: 720px) {
+  .hud-board {
+    top: 96px;
+    min-width: 0;
+    font-size: 11px;
+  }
+  .board-row {
+    font-size: 11px;
+  }
+}
+
+/*
+ * Sound toggle. Sits above the recovery button, which already owns the
+ * bottom-left corner — the two were drawn on top of each other.
+ */
+.hud-mute {
+  position: absolute;
+  bottom: 76px;
+  left: 26px;
+  pointer-events: auto;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  padding: 8px 13px;
+  border-radius: 8px;
+  border: 1px solid var(--edge);
+  background: var(--scrim);
+  color: var(--dim);
+  cursor: pointer;
+  backdrop-filter: blur(8px);
+}
+
+.hud-mute.off {
+  color: #ff9f9a;
+  border-color: rgba(255, 69, 58, 0.5);
+}
+
+.hud.panels-hidden .hud-mute {
+  display: none;
 }

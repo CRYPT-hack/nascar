@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <!-- maximum-scale + user-scalable=no: a two-handed grip pinch-zooms otherwise. -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#0c1017" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <title>Interlagos — phone controller</title>
+  </head>
+  <body>
+    <div id="setup">
+      <h1>Phone controller</h1>
+      <p class="sub">
+        Enter the code shown on your laptop, then hold the phone flat in two hands like a steering
+        wheel. Turn to steer, tilt the far edge down to accelerate, tilt back to brake.
+      </p>
+      <input id="code" type="text" inputmode="latin" autocomplete="off" autocapitalize="characters"
+             spellcheck="false" placeholder="CODE" aria-label="Pairing code" />
+      <button id="start">Start driving</button>
+      <div id="setup-msg" role="status"></div>
+    </div>
+
+    <div id="drive" hidden>
+      <div class="bar">
+        <span id="status-dot" class="dot"></span>
+        <span id="status-text">connecting…</span>
+      </div>
+
+      <div class="gauges">
+        <div class="steer"><div id="steer-fill"></div></div>
+        <div class="pedal"><div id="pedal-fill" class="pedal-fill"></div></div>
+      </div>
+
+      <div class="controls">
+        <div id="readout"></div>
+        <button id="recal" type="button">Re-centre</button>
+        <button id="flip" type="button">Tilt: normal</button>
+        <button id="handbrake" type="button">HANDBRAKE</button>
+      </div>
+    </div>
+
+    <script type="module" src="/client/src/controller.ts"></script>
+  </body>
+</html>
