@@ -28,6 +28,8 @@ import { CAR_COLORS, RACE_LAPS } from '../../shared/constants';
 import type { PlayerInfo, RaceState, ResultEntry } from '../../shared/protocol';
 import { formatLapTime, Hud, initialHudState, type HudState } from './hud/hud';
 import { Screens } from './hud/screens';
+import type { PhoneLinkStatus } from './phone-link';
+import { controllerUrl } from './phone-link';
 
 /** Kept for compatibility: main.ts and the netcode overlay import this. */
 export function formatMs(ms: number | null): string {
@@ -51,6 +53,11 @@ export class Ui {
   private readyIntent = false;
   private readyConfirmed: boolean | null = null;
   private spectating = false;
+  /** True once the player has pressed Join, so the join screen is behind us. */
+  private joined = false;
+
+  private phoneStatus: PhoneLinkStatus = 'connecting';
+  private phoneCode: string | null = null;
 
   private phase: RaceState = 'lobby';
   /** Local wall-clock deadline for the current phase, or 0 for no timer. */
@@ -71,13 +78,35 @@ export class Ui {
     this.screens.showJoin({
       name: this.name,
       color: this.chosenColor,
+      phone: this.phonePairing(),
       onJoin: (name, color) => {
+        this.joined = true;
         this.name = name;
         this.chosenColor = color;
         localStorage.setItem('driverName', name);
         this.onJoin?.(name, color);
       },
     });
+  }
+
+  /**
+   * Pairing state for the phone controller, shown on the join and lobby
+   * screens. Repaints only while one of those is up — mid-race a phone
+   * reconnecting must not rebuild a card over the track.
+   */
+  setPhoneLink(status: PhoneLinkStatus, code: string | null): void {
+    if (status === this.phoneStatus && code === this.phoneCode) return;
+    this.phoneStatus = status;
+    this.phoneCode = code;
+    if (this.joined) {
+      if (this.phase === 'lobby' || this.spectating) this.paintLobby();
+    } else {
+      this.showLobby();
+    }
+  }
+
+  private phonePairing(): { status: PhoneLinkStatus; code: string | null; url: string } {
+    return { status: this.phoneStatus, code: this.phoneCode, url: controllerUrl() };
   }
 
   showRoster(players: PlayerInfo[], myId: number): void {
@@ -98,6 +127,7 @@ export class Ui {
       players: this.players,
       selfId: this.myId,
       selfColor: this.chosenColor,
+      phone: this.phonePairing(),
       ready: this.readyIntent,
       readyPending: this.readyConfirmed !== this.readyIntent,
       joinHint: location.host,
@@ -124,6 +154,7 @@ export class Ui {
     switch (state) {
       case 'lobby':
         this.spectating = false;
+        this.joined = true;
         this.readyIntent = false;
         this.readyConfirmed = false;
         this.lapStart = 0;

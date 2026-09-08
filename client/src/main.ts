@@ -29,6 +29,7 @@ import { createRaceWorld, initPhysics, type RaceWorld } from '../../vehicle/worl
 import { ChaseCamera } from './camera';
 import { Connection, defaultServerUrl, netSimFromQuery } from './connection';
 import { InputSource } from './input';
+import { PhoneLink } from './phone-link';
 import { NetStats } from './netstats';
 import { INPUT_REDUNDANCY, PredictedCar } from './prediction';
 import { RemoteCars } from './remote';
@@ -65,6 +66,8 @@ class Game {
   prediction!: PredictedCar;
   remote!: RemoteCars;
   readonly input = new InputSource();
+  /** Phone-as-steering-wheel. Feeds `input` like a gamepad; null when absent. */
+  readonly phone = new PhoneLink();
   private readonly stats = new NetStats();
   private readonly ui = new Ui();
   conn!: Connection;
@@ -117,6 +120,13 @@ class Game {
 
     this.resize();
     addEventListener('resize', () => this.resize());
+
+    // A phone frame overrides the keyboard while one is live, and returns null
+    // the moment it goes stale, so a phone leaving Wi-Fi hands back to the keys
+    // rather than holding the last steering angle into a wall.
+    this.input.external = () => this.phone.current();
+    this.phone.onChange = () => this.ui.setPhoneLink(this.phone.status, this.phone.code);
+    this.ui.setPhoneLink(this.phone.status, this.phone.code);
 
     this.ui.onJoin = (name, color) => this.connect(name, color);
     this.ui.onReady = (ready) => this.setReady(ready);

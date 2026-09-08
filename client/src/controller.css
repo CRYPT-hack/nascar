@@ -1,0 +1,249 @@
+/*
+ * Phone controller styling.
+ *
+ * Built for a phone held flat in two hands, in landscape, by someone who is
+ * looking at a laptop screen and not at this page. So: very few things on
+ * screen, thumb-sized targets at the edges where thumbs actually are, and
+ * nothing that scrolls, zooms or selects when gripped.
+ */
+
+* {
+  box-sizing: border-box;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  /* Without this a two-handed grip pans and pinch-zooms the page. */
+  touch-action: none;
+  overscroll-behavior: none;
+  background: #0c1017;
+  color: #eef3f8;
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  font-variant-numeric: tabular-nums;
+}
+
+#setup,
+#drive {
+  position: fixed;
+  inset: 0;
+  padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right))
+    max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+}
+
+[hidden] {
+  display: none !important;
+}
+
+/* --- Setup --------------------------------------------------------------- */
+
+#setup {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 14px;
+  max-width: 460px;
+  margin: 0 auto;
+}
+
+h1 {
+  margin: 0;
+  font-size: 26px;
+  letter-spacing: -0.01em;
+}
+
+.sub {
+  margin: 0;
+  color: #93a6b8;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+#code {
+  font: inherit;
+  font-size: 34px;
+  font-weight: 800;
+  letter-spacing: 0.35em;
+  text-align: center;
+  text-transform: uppercase;
+  padding: 16px 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: #151b25;
+  color: #eef3f8;
+  width: 100%;
+}
+
+#code:focus {
+  outline: none;
+  border-color: #ffd60a;
+}
+
+button {
+  font: inherit;
+  font-weight: 700;
+  border: 0;
+  border-radius: 14px;
+  padding: 17px 20px;
+  background: #ffd60a;
+  color: #12161c;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.5;
+}
+
+#setup-msg {
+  min-height: 40px;
+  color: #ffb3ab;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+/* --- Driving ------------------------------------------------------------- */
+
+#drive {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  gap: 12px;
+}
+
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: #93a6b8;
+}
+
+.dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #6b7683;
+  flex: 0 0 auto;
+}
+.dot.ok {
+  background: #30d158;
+}
+.dot.warn {
+  background: #ffd60a;
+}
+.dot.bad {
+  background: #ff453a;
+}
+
+.gauges {
+  display: grid;
+  grid-template-columns: 1fr 74px;
+  gap: 12px;
+  align-items: stretch;
+  min-height: 0;
+}
+
+/* Steering: a bar whose fill slides left and right of centre. */
+.steer {
+  position: relative;
+  border-radius: 14px;
+  background: #151b25;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+
+.steer::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 8px;
+  bottom: 8px;
+  width: 2px;
+  margin-left: -1px;
+  background: rgba(255, 255, 255, 0.16);
+}
+
+#steer-fill {
+  position: absolute;
+  left: 25%;
+  top: 12px;
+  bottom: 12px;
+  width: 50%;
+  border-radius: 10px;
+  background: linear-gradient(90deg, #0a84ff, #64d2ff);
+  transition: transform 60ms linear;
+}
+
+/* Pedal: one column, green up for throttle, red up for brake. */
+.pedal {
+  position: relative;
+  border-radius: 14px;
+  background: #151b25;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+
+.pedal-fill {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 0;
+  background: linear-gradient(180deg, #30d158, #1f8f3d);
+  transition: height 60ms linear;
+}
+
+.pedal-fill.braking {
+  background: linear-gradient(180deg, #ff453a, #a52820);
+}
+
+.controls {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 10px;
+  align-items: center;
+}
+
+#readout {
+  font-size: 13px;
+  color: #93a6b8;
+}
+
+#handbrake {
+  background: #2b3440;
+  color: #eef3f8;
+  min-width: 128px;
+}
+
+#handbrake.on {
+  background: #ff453a;
+  color: #fff;
+}
+
+#flip,
+#recal {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: #93a6b8;
+  font-size: 13px;
+  padding: 12px 14px;
+}
+
+/* Portrait nudge: this is a two-handed landscape controller. */
+@media (orientation: portrait) {
+  #drive::before {
+    content: 'Turn your phone sideways';
+    position: fixed;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    background: rgba(12, 16, 23, 0.94);
+    font-size: 19px;
+    font-weight: 700;
+    z-index: 5;
+  }
+}

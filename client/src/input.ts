@@ -42,6 +42,15 @@ export class InputSource {
   /** True while the player is typing into a form, so driving keys are ignored. */
   suspended = false;
 
+  /**
+   * Optional external controller, checked ahead of the gamepad.
+   *
+   * Used by the phone-as-steering-wheel link. Returning null means "not
+   * driving", and the keyboard takes over — which is what happens the moment a
+   * phone locks its screen or leaves Wi-Fi range.
+   */
+  external: (() => CarInput | null) | null = null;
+
   private readonly onKeyDown = (e: KeyboardEvent): void => {
     if (this.suspended) return;
     if (isTypingTarget(e.target)) return;
@@ -84,6 +93,16 @@ export class InputSource {
 
   /** Sample the current input. `dt` is the time since the last sample. */
   sample(dt: number): CarInput {
+    const remote = this.external?.() ?? null;
+    if (remote) {
+      // Mirror into the ramp state so releasing the phone hands over from
+      // wherever the wheel actually was, rather than snapping to centre.
+      this.steer = remote.steer;
+      this.throttle = remote.throttle;
+      this.brake = remote.brake;
+      return { ...remote, handbrake: remote.handbrake || this.held(KEYS.handbrake) };
+    }
+
     const pad = readGamepad();
 
     if (pad) {

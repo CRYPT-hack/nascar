@@ -47,13 +47,22 @@ export interface LobbyOptions {
   readyPending?: boolean;
   /** How the player joins — shown so the host can read it out at the venue. */
   joinHint?: string;
+  phone?: PhonePairing;
   onReady(ready: boolean): void;
   onColor(colorIndex: number): void;
+}
+
+/** Phone-controller pairing state, rendered as a card on both screens. */
+export interface PhonePairing {
+  status: 'connecting' | 'waiting' | 'paired' | 'offline';
+  code: string | null;
+  url: string;
 }
 
 export interface JoinOptions {
   name: string;
   color: number;
+  phone?: PhonePairing;
   onJoin(name: string, color: number): void;
 }
 
@@ -137,6 +146,8 @@ export class Screens {
       picker.append(b);
     }
     this.card.append(picker);
+
+    if (o.phone) this.card.append(phoneCard(o.phone));
 
     const actions = el('div', 'actions');
     // The middle state matters: a `ready` can be lost and is re-sent until the
@@ -270,6 +281,8 @@ export class Screens {
       if (e.key === 'Enter') go();
     });
 
+    if (o.phone) this.card.append(phoneCard(o.phone));
+
     const actions = el('div', 'actions');
     const joinBtn = el('button', undefined, 'Join race');
     joinBtn.addEventListener('click', go);
@@ -297,4 +310,48 @@ export class Screens {
   dispose(): void {
     this.root.remove();
   }
+}
+
+/**
+ * Phone-controller pairing card.
+ *
+ * Shows the code, the address to open, and a QR of the two together so a player
+ * can scan instead of typing — at a venue, a queue of ten people each typing a
+ * URL and a code into a phone is its own small disaster (HANDOFF.md §9).
+ *
+ * Rendered on both the join and lobby screens: pairing a phone is something
+ * people do while waiting, not something they plan in advance.
+ */
+export function phoneCard(p: PhonePairing): HTMLElement {
+  const card = el('div', 'phone-card');
+
+  const label: Record<PhonePairing['status'], string> = {
+    connecting: 'Phone control — connecting…',
+    waiting: 'Steer with your phone',
+    paired: 'Phone connected',
+    offline: 'Phone control unavailable',
+  };
+  const head = el('div', 'phone-head');
+  head.append(el('span', `dot ${p.status === 'paired' ? 'ok' : p.status === 'offline' ? 'bad' : 'warn'}`));
+  head.append(el('span', undefined, label[p.status]));
+  card.append(head);
+
+  if (p.status === 'paired') {
+    card.append(el('div', 'phone-sub', 'Hold it flat like a wheel. Turn to steer, tilt forward to go.'));
+    return card;
+  }
+  if (p.status !== 'waiting' || !p.code) {
+    card.append(el('div', 'phone-sub', 'Keyboard controls still work: arrows or WASD, space for handbrake.'));
+    return card;
+  }
+
+  const body = el('div', 'phone-body');
+  body.append(el('div', 'phone-code', p.code));
+  const how = el('div', 'phone-sub');
+  how.append(document.createTextNode('On your phone open '));
+  how.append(el('b', 'phone-url', p.url.replace(/^https?:\/\//, '')));
+  how.append(document.createTextNode(' and enter this code.'));
+  body.append(how);
+  card.append(body);
+  return card;
 }

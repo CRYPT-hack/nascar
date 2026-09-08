@@ -26,10 +26,14 @@ export default defineConfig({
     target: 'es2022',
     sourcemap: true,
     rollupOptions: {
-      // Both entries listed explicitly. index.html is the game and is what the
-      // demo serves; preview.html is the track/environment viewer. Naming only
-      // one here silently drops the other from `npm run build`.
-      input: { main: r('./index.html'), preview: r('./preview.html') },
+      // Every entry listed explicitly: index.html is the game, preview.html the
+      // track viewer, controller.html the phone steering wheel. Naming only one
+      // here silently drops the others from `npm run build`.
+      input: {
+        main: r('./index.html'),
+        preview: r('./preview.html'),
+        controller: r('./controller.html'),
+      },
     },
   },
   optimizeDeps: {

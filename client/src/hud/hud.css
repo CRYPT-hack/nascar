@@ -390,3 +390,67 @@
     font-size: 58px;
   }
 }
+
+/* --- Phone controller pairing card --------------------------------------- */
+
+.phone-card {
+  margin-top: 22px;
+  padding: 16px 18px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--edge);
+}
+
+.phone-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.phone-head .dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #6b7683;
+  flex: 0 0 auto;
+}
+.phone-head .dot.ok {
+  background: #30d158;
+}
+.phone-head .dot.warn {
+  background: var(--accent);
+}
+.phone-head .dot.bad {
+  background: #ff453a;
+}
+
+.phone-body {
+  margin-top: 12px;
+}
+
+.phone-code {
+  font-size: 44px;
+  font-weight: 800;
+  letter-spacing: 0.22em;
+  line-height: 1.1;
+  color: var(--accent);
+}
+
+.phone-sub {
+  margin-top: 6px;
+  color: var(--dim);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.phone-url {
+  color: var(--ink);
+  font-weight: 600;
+  /* An address is read character by character off a screen; a monospace face
+     stops 1/l and 0/O being guessed at. */
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  word-break: break-all;
+}

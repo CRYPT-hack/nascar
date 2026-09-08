@@ -15,7 +15,8 @@
     "typecheck": "tsc --noEmit",
     "track:build": "tsx track/src/build.ts",
     "loadtest": "tsx tools/loadtest.ts",
-    "test": "tsx tools/roomtest.ts"
+    "test": "tsx tools/roomtest.ts",
+    "certs": "bash tools/make-certs.sh"
   },
   "dependencies": {
     "@dimforge/rapier3d-compat": "0.14.0",
