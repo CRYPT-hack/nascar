@@ -15,7 +15,7 @@
     "typecheck": "tsc --noEmit",
     "track:build": "tsx track/src/build.ts",
     "loadtest": "tsx tools/loadtest.ts",
-    "test": "tsx tools/roomtest.ts",
+    "test": "tsx tools/roomtest.ts && tsx tools/carmeshtest.ts",
     "certs": "bash tools/make-certs.sh"
   },
   "dependencies": {

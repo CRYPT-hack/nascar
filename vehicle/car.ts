@@ -251,7 +251,20 @@ export class Car {
     const half = { x: CAR.width / 2, y: 0.34, z: CAR.length / 2 };
     const cd = RAPIER.ColliderDesc.cuboid(half.x, half.y, half.z)
       .setFriction(0.22) // low: sliding along a barrier should not spin the car
-      .setRestitution(0.12)
+      // Car-to-car only: the road and the barriers combine with Min, so this
+      // value never reaches them.
+      //
+      // 0.12 was close to perfectly inelastic - a 144 km/h rear-end left the
+      // two cars locked together and grinding, parting at 20.8 km/h. 0.50 was
+      // pinball (75.2 km/h).
+      //
+      // 0.30 read best on the rig, but it cost races: with cars bouncing that
+      // hard off the parked car on the grid, one of the five AI stopped
+      // completing its lap inside the time roomtest allows. 0.20 keeps the
+      // shove - a rear-end still drives the struck car to 86 km/h and a T-bone
+      // to 75 - while the AI field laps as it did before. Measured by
+      // tools/collisiontest.ts; the AI cost is why it is not higher.
+      .setRestitution(0.2)
       .setDensity(0) // mass comes from setAdditionalMassProperties below
       .setCollisionGroups(interactionGroups(GROUP.CAR, GROUP.CAR | GROUP.BARRIER | GROUP.TRACK))
       .setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS);

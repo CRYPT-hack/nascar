@@ -7,8 +7,11 @@
  * render, and the `scene`/`renderer` fields — so none of the netcode wiring
  * changes, and swaps the body for the real environment in client/src/render/.
  *
- * `CarView` and `carColor` are Instance A's and are kept as they were: car
- * meshes are assigned to neither instance (see STATUS-INSTANCE-B.md §3).
+ * `CarView` and `carColor` are Instance A's. Car meshes were assigned to
+ * neither instance (STATUS-INSTANCE-B.md §3); Instance A has taken them. The
+ * geometry is built in render/car-mesh.ts from the dimensions in
+ * shared/constants.ts, so the car drawn is the size of the car that collides.
+ * The old boxes stay as a fallback that nothing should now reach.
  */
 
 import * as THREE from 'three';
@@ -16,6 +19,12 @@ import * as THREE from 'three';
 import { CAR, CAR_COLORS } from '../../shared/constants';
 import type { TrackData } from '../../shared/track-schema';
 import { configureRenderer, createEnvironment } from './render/scene';
+import {
+  bodyMaterial,
+  getCarModel,
+  WHEEL_REST_Y,
+  type CarModel,
+} from './render/car-mesh';
 import { createGroundPlane, createTrackView, type TrackView } from './render/track-view';
 import type { Q4, V3 } from '../../vehicle/math3';
 
@@ -25,9 +34,56 @@ export function carColor(index: number): number {
 
 export class CarView {
   readonly group = new THREE.Group();
-  private readonly wheels: THREE.Mesh[] = [];
+
+  /** Steering pivots. 0 and 1 are the front pair; each holds the wheel mesh. */
+  private readonly wheels: THREE.Object3D[] = [];
+  /** The meshes inside those pivots, spun about X so the wheels look driven. */
+  private readonly tyres: THREE.Object3D[] = [];
+
+  private readonly wheelRadius = CAR.wheelRadius;
+  private readonly last = new THREE.Vector3();
+  private readonly forward = new THREE.Vector3();
+  private readonly delta = new THREE.Vector3();
+  private posed = false;
+  private roll = 0;
 
   constructor(colorIndex: number, isLocal: boolean) {
+    const model = getCarModel(colorIndex);
+    if (model) this.buildModel(model, isLocal);
+    else this.buildBoxes(colorIndex, isLocal);
+  }
+
+  /** Geometry built to the physics dimensions by render/car-mesh.ts. */
+  private buildModel(model: CarModel, isLocal: boolean): void {
+    const body = new THREE.Mesh(model.body, bodyMaterial);
+    body.castShadow = true;
+    this.group.add(body);
+
+    for (const w of model.wheels) {
+      const pivot = new THREE.Object3D();
+      pivot.position.copy(w.position);
+      const tyre = new THREE.Mesh(w.geometry, bodyMaterial);
+      tyre.castShadow = true;
+      pivot.add(tyre);
+      this.group.add(pivot);
+      // Front pair first, so setSteer keeps addressing 0 and 1.
+      if (w.steered) {
+        this.wheels.unshift(pivot);
+        this.tyres.unshift(tyre);
+      } else {
+        this.wheels.push(pivot);
+        this.tyres.push(tyre);
+      }
+    }
+
+    if (isLocal) this.group.add(localMarker(model.body));
+  }
+
+  /**
+   * Fallback for a pack that did not load. Deliberately kept: a car that is a
+   * box still races, and a missing asset should not end the demo.
+   */
+  private buildBoxes(colorIndex: number, isLocal: boolean): void {
     const color = carColor(colorIndex);
 
     const body = new THREE.Mesh(
@@ -61,16 +117,47 @@ export class CarView {
       [-hx, hz],
       [hx, hz],
     ] as const) {
+      const pivot = new THREE.Object3D();
+      pivot.position.set(x, WHEEL_REST_Y, z);
       const w = new THREE.Mesh(wheelGeo, wheelMat);
-      w.position.set(x, -0.2, z);
-      this.wheels.push(w);
-      this.group.add(w);
+      pivot.add(w);
+      this.wheels.push(pivot);
+      this.tyres.push(w);
+      this.group.add(pivot);
     }
   }
 
   setPose(p: V3, q: Q4): void {
     this.group.position.set(p.x, p.y, p.z);
     this.group.quaternion.set(q.x, q.y, q.z, q.w);
+    this.spin(p, q);
+  }
+
+  /**
+   * Rolls the wheels from how far the car actually moved along its own nose,
+   * rather than plumbing speed in from the netcode. Everything needed is
+   * already in the pose, and it keeps `setPose` the only call site.
+   */
+  private spin(p: V3, q: Q4): void {
+    if (!this.posed) {
+      this.last.set(p.x, p.y, p.z);
+      this.posed = true;
+      return;
+    }
+    this.delta.set(p.x - this.last.x, p.y - this.last.y, p.z - this.last.z);
+    this.last.set(p.x, p.y, p.z);
+
+    // Forward is -Z (HANDOFF.md §5.1).
+    this.forward.set(0, 0, -1).applyQuaternion(this.group.quaternion);
+    const travelled = this.delta.dot(this.forward);
+    // A reconciliation snap or a respawn is not distance travelled; a wheel
+    // that whirls on a correction reads as a glitch.
+    if (Math.abs(travelled) > 2) return;
+
+    // Positive rotation about X carries the top of the wheel towards +Z, which
+    // is backwards, so driving forwards winds the angle down.
+    this.roll -= travelled / this.wheelRadius;
+    for (const t of this.tyres) t.rotation.x = this.roll;
   }
 
   /** Steering angle is the physical wheel angle: positive is LEFT (see car.ts). */
@@ -82,6 +169,24 @@ export class CarView {
   setVisible(v: boolean): void {
     this.group.visible = v;
   }
+}
+
+/**
+ * A blade above the local car's roof. The chase camera and the HUD both say
+ * which car is yours until the moment you are in a pack of ten and the camera
+ * is looking at six of them; this is for that moment.
+ */
+function localMarker(body: THREE.BufferGeometry): THREE.Mesh {
+  body.computeBoundingBox();
+  const top = body.boundingBox ? body.boundingBox.max.y : 0.5;
+  const marker = new THREE.Mesh(
+    new THREE.ConeGeometry(0.16, 0.34, 4),
+    new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0x606060, roughness: 0.5 }),
+  );
+  marker.position.set(0, top + 0.32, 0);
+  marker.rotation.x = Math.PI; // point down at the roof
+  marker.castShadow = false;
+  return marker;
 }
 
 export class Scene {

@@ -7,90 +7,27 @@ Newest blockers go at the very top so they are seen first.
 
 ## BLOCKERS
 
-### 2026-09-07 — RESOLVED: "Instance B has delivered nothing"
+**The gate was re-run on 2026-09-08 with the merged tree: 2 pass, 1 fail, 2
+not measurable.** Section at the end of this file. The two that cannot be
+measured are the machine, not the build, and there is a control run that shows
+it.
 
-Instance A logged this, and it was accurate when written. Instance B's work
-existed but was stranded on a local branch: the `gh` CLI on the build machine
-was authenticated as an account with read-only access to the repo, so eight
-commits sat unpushed for about twenty hours while A saw an empty `assets/` and
-no B history at all. Access has since been granted and everything is merged.
+**This machine still cannot be measured on.** `cpubench` reads 12.6-14.5 ms per
+ten-car step against 1.07-2.75 ms when healthy, and the CPU sits at ~1.57 GHz
+under load - 65% of its own 2.4 GHz base, on a part that should turbo well
+above it. Roblox is closed and it did not help; five minutes of idle did not
+help. It is not a Windows setting: max processor state is 100% on AC and DC,
+and no power-mode overlay is set. Checks 2 and 3 need a client that can hold a
+60 Hz loop, and this one stalls for 249 ms at p99.
 
-A's assessment of the existing Interlagos was right, and nothing has replaced
-it. The track JSON is **byte-identical** to what every gate run used. What the
-merge adds around it: the visual mesh and material set, sky and lighting,
-barriers, trackside scenery, the HUD, and the lobby/results screens.
+**Check 2 remains an accepted deviation and will not be fixed.** Decision was
+final before this re-run and nothing here reopens it.
 
-No decision needed. Step 3 (the venue recording) can go ahead on this geometry.
-
----
-
-### 2026-09-07 — Banking: I broke it, measured it, and reverted it
-
-Resolved, recorded because the failure mode is worth keeping. **No action needed
-from Instance A, and the gate results still stand** — the track JSON is
-byte-identical to what those gates were run against.
-
-`Waypoint.banking` says "positive = banked right", which does not say which way
-the surface tilts. The two halves read it oppositely:
-
-- `vehicle/track-collision.ts` rolls about `forward x right` — positive banking
-  puts the **right edge lower**
-- `track/src/mesh.ts` rolled about `right x forward` — positive banking put the
-  right edge **higher**
-
-Each half was self-consistent, so nothing caught it. Combined with the
-generator's `+curvature * BANK_GAIN`, the *physics* surface was correctly
-cambered all along; only the rendered road leaned the wrong way.
-
-I read the renderer's convention, concluded the generator was emitting banking
-inverted, and flipped it. That put every corner genuinely off-camber in the
-collision mesh the car drives on. Measured with `tools/laptest.ts interlagos 10 3`:
-
-| | before | after the flip |
-|---|---|---|
-| finishers | **10 / 10** | **2 / 10** |
-| off-track | 0.0–2.3% | 65–90% |
-| best lap | 1:19.6 | 1:24.4 |
-
-Reverted. The renderer and `TrackSampler.groundY` were changed instead, so the
-visible road now sits the same way up as the surface under the wheels — which
-also fixes the pre-existing visual/physics camber mismatch. Convention written
-down in CHANGELOG-SHARED.md; the physics builder owns it.
-
-Two things worth taking from this. Reasoning about a sign convention from one
-side of a boundary is not evidence about the system: both readings looked
-correct in isolation, and only running the car told the truth. And the check
-that caught it was a whole-system behavioural one — ten cars driving three laps
-— not a geometry assertion. My build-time geometry checks all passed happily
-throughout, because the geometry was internally consistent the entire time.
-
-### 2026-09-07 — Cross-section constants differ between collision and visuals
-
-`vehicle/track-collision.ts` and `track/src/section.ts` independently define the
-same cross-section, and disagree: kerb 1.2 m vs 1.1 m, run-off 9 m vs 14 m
-(mine variable per side), barrier 1.3 m vs 1.2 m. The visible road does not sit
-exactly on the colliders.
-
-Not urgent — the discrepancy is at the edges, not under the racing line — but it
-is the "visibly on asphalt, grass friction" class of bug. Proposal, unless
-Instance A objects: **A's numbers win**, since they are baked into a
-gate-passing physics build, and `section.ts` changes to match.
-
-**Hour-20 gate under 100 ms / 2% impairment: 4 pass, 1 accepted deviation.**
-Section at the end of this file. §7 scoring is *continue to full 10-player*,
-and check 4 (contact) passes, so the player count stays at ten.
-
-**Check 2 is closed as an accepted deviation and will not be fixed.** p99
-prediction error 1.498 m against a 1 m bar, but p95 is 0.004 m and there is not
-one hard snap in ninety seconds - no rubber-banding, which is what the check is
-actually about. The remedy would be rollback in the authoritative loop, which is
-not a trade worth making at this stage. Full justification at the end of this
-file. Do not reopen.
-
-**Run `npx tsx tools/cpubench.ts` before trusting any gate run.** This machine
-throttled to a tenth of its throughput mid-session and made the server look as
-though it had lost 40% of its headroom and the netcode look broken. Neither had
-changed. Anything above about 4 ms per ten-car step invalidates timing results.
+**Run `npx tsx tools/cpubench.ts` before trusting any gate run** - but read it
+alongside the harness's own tick rate. cpubench runs a sustained 100% load and
+this machine throttles hard under that; the server's real duty cycle is bursty
+and it held 59.99 Hz with ten cars in the same session cpubench called 14 ms.
+A slow cpubench means *timing results are suspect*, not that the server is down.
 
 ---
 
@@ -937,3 +874,464 @@ lobby a car stays wherever the race left it**, so a player who ended up in the
 gravel sits in the gravel until the next grid forms. `setState('lobby')` does
 not reposition cars; only `placeOnGrid()` does. It resolves itself at the next
 race and is untidy rather than broken.
+
+---
+
+## Instance B merged, and what I checked rather than took on trust
+
+B's status document reports the merge as done and the tree as healthy. It is,
+and these are my own numbers rather than a restatement of theirs:
+
+| check | result |
+|---|---|
+| `git pull --ff-only` | clean fast-forward; B had already merged my netcode into their branch |
+| `tsc --noEmit` | clean |
+| `npm test` (race logic) | **33/33** |
+| `vite build` | builds `index.html` and `preview.html` |
+| `git diff ec6f430..HEAD -- shared/ vehicle/ server/ public/track/` | **empty** |
+
+That last row is the one that matters. B changed nothing in `shared/`,
+`vehicle/`, `server/` or the track JSON, so **the physics and the circuit are
+byte-identical to what every gate result in this file was measured against**.
+The gate numbers already recorded still stand; the re-run is to confirm them
+with the render layer and the HUD present, not because anything underneath
+moved.
+
+What the merge adds: the visual track mesh, materials, sky and lighting,
+barriers, trackside scenery, the HUD, and the lobby and results screens.
+
+---
+
+## Car models: taken, wired in, and one bug worth writing down
+
+STATUS-INSTANCE-B.md §3 lists car meshes and liveries as assigned to neither
+instance, and warns that if nobody takes them the cars are placeholder shapes at
+the demo. They were: a box, a wedge for a nose, and four cylinders. Ten glTF
+stock cars were supplied in `models/`, so Instance A has taken this.
+
+`public/cars/` now holds the ten, and `client/src/render/car-model.ts`
+normalises them. They do not arrive usable:
+
+- **forward is +Z**; cars face **-Z** here (HANDOFF.md §5.1), so every model is
+  yawed 180 degrees
+- they are **2.346 m wide** against the collider's 1.9 m. Scaling on width
+  (x0.810) lands the height on 1.088 m against `CAR.height` 1.1 — two of three
+  dimensions on the physics constants from one uniform factor, which is why
+  width is the right datum rather than length
+- the origin sits on the ground, so the model is lowered to put the tyre contact
+  patch where the physics puts it
+
+The wheels are split out of the mesh by which quadrant their triangles sit in,
+so the front pair still steers. They also roll now, driven from how far the car
+moved along its own nose between poses — no netcode plumbing, and `setPose`
+stays the only call site. A snap larger than 2 m is discarded rather than
+spun, because a reconciliation correction is not distance travelled.
+
+**The bug: the pack ships positions only — no normals on any primitive.** A
+`MeshStandardMaterial` with no normals renders pure black, and the first build
+put a black silhouette of a car on the track. Nothing in the console said so;
+the only errors were harmless warnings about missing accessor min/max. I found
+it by running the geometry pipeline outside the browser and printing the
+attribute list on each primitive, which said `attrs=position` nine times.
+Guessing at it from the screenshot would have cost far longer — the symptom
+looks like a lighting or a colour-space problem and is neither.
+
+### Draw calls, because that is the budget
+
+B measured the environment at 17 draw calls and 8.4 ms a frame with an **empty**
+grid. Rendering each car a primitive at a time would have added ninety. Every
+opaque body material in the pack shares metalness 0.12 and roughness 0.52 and
+differs only in colour, so they merge into one vertex-coloured mesh with no
+visual difference whatsoever.
+
+| | measured |
+|---|---|
+| meshes per car | **6** (body, glass, four wheels); 7 for the local car, which carries a marker |
+| triangles per car | ~1,090 |
+| ten cars racing, worst sampled frame | **50 draw calls**, 145,314 triangles |
+| same scene, old box cars | 77 draw calls, 150,358 triangles |
+
+The merge is why damage is not wired up: it discards the four morph targets
+(`FrontImpact` and friends) the pack ships. Nothing asked for damage. Keeping
+the body primitives unmerged is the switch to flip if that changes.
+
+### Verified
+
+- ten liveries render, each keeping its accent and number while its base coat is
+  overridden to the colour the player actually clicked in the lobby
+- remote cars use the same path — checked with a second car alongside on the grid
+- **the fallback works.** With every model returning 404 the client still boots,
+  still joins, and races on the old boxes at 101 km/h. A missing asset must not
+  end the demo, so this is tested rather than asserted.
+
+### Not verified
+
+- **Frame rate.** The browser pane in this session is hidden, and
+  `requestAnimationFrame` is throttled when a tab is not visible — the same trap
+  `netcheck.ts` was written to avoid. Draw calls and triangle counts above are
+  real, because they are counts from the last rendered frame; a frames-per-second
+  number from here would not be. It needs measuring on the venue machine.
+- Ten cars **on a projector**, which is what B tuned the contrast and fog for.
+
+---
+
+## Cars are parked back on the grid between races
+
+Found during the join-path verification and left for the polish pass. A race
+ends wherever it ends, and `setState('lobby')` repositioned nothing — only
+`placeOnGrid()` did, and that runs on the way *into* a race. So a player who
+finished in the gravel sat in the gravel for the whole lobby, facing a barrier
+or upside down against a tyre wall, until the next grid formed. It resolved
+itself at the next race and was untidy rather than broken, but it is the first
+thing anyone waiting for a race looks at.
+
+`parkOnGrid()` now runs on entry to the lobby. It is deliberately not
+`placeOnGrid()`: that decides race entry, and everyone has just been un-readied,
+so reusing it would take every car away and leave the lobby with nothing to
+show.
+
+The check added with it (`roomtest`, now 36) strands a car a quarter of the way
+round the circuit and asserts the lobby brings it back. It strands the car
+**upright and on the racing line** so that the stuck-car rescue has no reason to
+fire and cannot be what moves it. Confirmed to fail for the right reason:
+commenting out the one call gives `482.2 m from the nearest slot`.
+
+---
+
+## The car models are built, not loaded
+
+The supplied glTF pack went in first and did not survive being looked at
+properly. Parked and photographed from four angles it has:
+
+- **side skirts outboard of the bodywork**, so they hang off the car as thin
+  detached blades several metres long
+- **no wheel arches** — the wheels are swallowed by a slab body and only the
+  bottom of each tyre shows
+- a **doorstop silhouette**: a flat wide slab with a small box on top
+
+It also brings its own proportions — 2.346 m wide against a 1.9 m collider, with
+the overall width set by the wheels rather than the body — so no uniform scale
+fixes one dimension without breaking another. Scaling on overall width, which is
+what shipped first, made the *body* 1.56 m against a 1.9 m collider: every car
+was visibly undersized for the track it was on.
+
+None of that is a scale bug. It is the shape.
+
+`client/src/render/car-mesh.ts` builds the car instead. Every dimension is read
+from `shared/constants.ts`, so the car that is drawn is the size of the car that
+collides: 4.5 m long, 1.9 m wide, wheels on the 2.8 m wheelbase and 1.6 m track,
+tyres of exactly `CAR.wheelRadius` with their contact patch on the ground.
+
+The shell is a rounded-rectangle cross-section lofted through sixteen stations.
+The arches come out of that for free: the underside rises above the tyre over a
+short run of z either side of each axle, so the loft walls itself into an arch
+and the wheel shows through it. On top of the shell sit a greenhouse (with the
+windows painted in rather than modelled as glass), a bonnet and roof stripe,
+door roundels, sills, splitter, grille, lamps and a rear spoiler.
+
+Shading is flat, and deliberately: the circuit, trees, stands and barriers are
+all low-poly and flat-shaded, and a smooth-shaded car in that world looks like
+it wandered in from another game.
+
+### Cost
+
+| | measured |
+|---|---|
+| meshes per car | **5** — body and four wheels (6 for the local car, which carries a marker) |
+| six cars racing, sampled frame | **48 draw calls**, 155k triangles |
+| assets downloaded | **none**; `public/cars/` and its 2.9 MB are gone |
+
+Livery is derived rather than authored: the base coat is the colour the player
+picked, and the accent flips between near-black and near-white on the base
+coat's luminance, so a yellow car gets black stripes and a navy one white.
+
+### Two bugs, and why there is now a test
+
+**Every mirrored part was inside out.** They are written `box(s * a, s * b, ...)`
+for `s` of -1 and 1, which for the left side hands `BoxGeometry` a negative
+extent — that mirrors it. The left headlamps, sills and door panels rendered as
+dark slivers while the right-hand ones were fine. `box()` now sorts its extents.
+
+**The glTF pack shipped no normals on any primitive**, and a lit material with
+no normals renders pure black. That one cost real time because the console said
+nothing: the only errors were harmless warnings about missing accessor min/max,
+and the symptom looks like a lighting or colour-space problem and is neither. It
+was found by running the geometry pipeline outside the browser and printing each
+primitive's attribute list, which said `attrs=position` nine times.
+
+Both are arithmetic, and arithmetic is checkable, so `tools/carmeshtest.ts` (30
+checks, in `npm test`) now covers them. The important one is winding: a closed
+mesh wound outward has positive signed volume, and **inside-out geometry is
+invisible in a screenshot until the light happens to catch it from the wrong
+side**. Confirmed to fail for the right reason — flipping the loft's winding
+gives `-2.666 m^3`.
+
+The pack itself stays in `models/` for provenance. Nothing loads it.
+
+---
+
+## A backgrounded player was being dropped, and became a ghost
+
+Found while trying to photograph a car: a client that had been sitting in a
+hidden tab could no longer start a race. Ready did nothing, the roster never
+came back, snapshots carried no car, and nothing on screen said why.
+
+The room had dropped the entrant. `CLIENT_TIMEOUT_MS` is 15 s and the client
+pings once a second — but from a `setTimeout` chain, and **browsers throttle
+timers hard in a hidden tab**, to once a minute after a few minutes
+backgrounded. Well past 15 s. Anyone who alt-tabs at the demo would have been
+ejected for it.
+
+The socket stayed open through all of this, and that is what turned a
+disconnection into a ghost: `onReady` returns early when there is no entrant, so
+no roster is broadcast and no error is sent. The player is connected to a room
+that has no record of them.
+
+Two fixes:
+
+- **Liveness is now a transport fact.** The server sends a WebSocket ping every
+  4 s and touches the entrant on the pong. The browser answers those itself,
+  without waking page script, so it keeps reporting liveness through any amount
+  of timer throttling — while a genuinely gone client still fails it.
+- **The socket goes with the entrant.** `RoomHooks.evict` tells the transport to
+  send an error and close, so a dropped player lands on the disconnected screen
+  instead of a lobby that ignores them. This adds `'timeout'` to
+  `ErrorMsg.code`; see CHANGELOG-SHARED.md.
+
+Verified end to end: 80 s idle in a hidden tab, then Ready is confirmed and the
+race starts. Before the fix the entrant was gone and the button did nothing.
+`roomtest` covers the eviction path (40 checks).
+
+### Not a bug, but it wasted time twice
+
+`requestAnimationFrame` does not run at all in a hidden tab. That is why a car
+being driven with a held key crawled at 3 km/h, and why the client had no car
+views while happily reporting `state: racing` and `fps: 60` — `fps` is only
+updated inside the frame loop, so it reads as whatever it was when the loop
+stopped. It is the same trap `netcheck.ts` was written to avoid, and it means
+**no frame-rate number can be taken from this session**; draw-call and triangle
+counts are fine, because they describe the last frame that did render.
+
+---
+
+## GATE RE-RUN ON THE MERGED TREE, 2026-09-08
+
+100 ms +/-20 ms latency, 2% packet loss, both directions, ten clients.
+
+**Result: 2 pass, 1 fail, 2 not measurable.**
+
+| | | measured | required |
+|---|---|---|---|
+| 1 | Server stability | **FAIL** - 59.99 Hz held, but **26.4%** headroom at p99 | >=40% |
+| 2 | Local responsiveness | **NOT MEASURABLE** - harness starved | <1 m, 0 snaps |
+| 3 | Remote smoothness | **NOT MEASURABLE** - same | 0, <5% |
+| 4 | Contact | **PASS** - **0** airborne in 13,990 samples, worst up.y 0.91 | 0, >0.2 |
+| 5 | Memory | **PASS** - RSS -0.5%, WASM +2.7%, heap +20.9% | no leak |
+
+Run lengths were 90 s. §7 asks 5 minutes for check 1 and 10 for check 5; on a
+machine taking five times as long per step, longer runs were not a good use of
+the remaining time. Both are recorded as short.
+
+### Why 2 and 3 are "not measurable" and not "fail"
+
+Because there is a control, and it is clean.
+
+Ten impaired clients, self-hosted harness: frame dt p99 **569 ms** against a
+16.7 ms budget, and the interpolation timeline ended up **10.7 s** behind the
+newest snapshot. That is a harness that stopped running, not a netcode result.
+
+Splitting the server into its own process (`NETCHECK_ATTACH`) fixed the
+timeline - server tick 59.5 Hz, render lag 67 ms - and the numbers were still
+bad: p99 33.2 m, 297 hard snaps, **2787 server input holds** in 55 s. But the
+pace controller was pegged at its ceiling (1.09x) with the server's input queue
+at **0.00**, which is the signature of a client that cannot generate inputs fast
+enough, not of a server mishandling them.
+
+**The control settles it.** Same build, same machine, impairment turned off:
+
+| | impaired | control (no impairment) |
+|---|---|---|
+| error p50 / p75 / p90 / p95 | 0.001 / 3.1 / 11.8 / 18.8 m | **0.000 / 0.000 / 0.000 / 0.000 m** |
+| error p99 | 33.222 m | **0.003 m** |
+| hard snaps | 297 | **0** |
+| server input holds | 2787 | **10** (0.72%) |
+| client frame dt p99 | 249 ms | 41 ms |
+
+A build that produces four zeroes and no hard snaps unimpaired has not
+regressed. What 100 ms of latency and 2% loss add is *reconciliation work* - the
+client replays more, per frame - and this machine cannot afford it. On a healthy
+machine the same code measured p95 0.004 m with zero hard snaps.
+
+So checks 2 and 3 are recorded as blocked on the machine. Reporting them as
+failures would be attributing to the code something a control run says is not
+the code's.
+
+### Check 1: the server did hold 60 Hz
+
+Worth separating the two things this check asks. The server **kept 59.99 Hz with
+ten cars racing under impairment**, all ten connected, for the whole run. What
+it did not keep is the headroom: step p50 3.54 ms and p99 12.26 ms of a 16.67 ms
+budget, so 26.4% at p99 against the 40% the check wants. On a healthy machine
+the same code measured p50 1.07 ms and 81.9% headroom.
+
+This also corrected something about `cpubench`. It reported 14.3 ms per ten-car
+step in the same session where the server sat at 3.54 ms p50 - a 4x gap. The
+difference is duty cycle: cpubench runs flat out and this machine throttles hard
+under sustained load, while a 60 Hz server works in bursts and boosts between
+them. cpubench is still the right pre-flight - a bad reading means timing
+results are suspect - but it is a floor, not a prediction of server headroom.
+
+### Checks 4 and 5 are real results
+
+Neither depends on how fast the wall clock runs. Check 4 samples car attitude
+across a fixed number of simulation steps, and **not one car in 13,990 samples
+left the road surface** - worst attitude up.y 0.91 (upright is 1.0), greatest
+height 0.63 m. Check 5 measures allocation, not speed: RSS fell 0.5% over the
+run and Rapier's WASM arena moved 2.7%.
+
+
+---
+
+## Making the car worth looking at
+
+The built car was correct but plain: a shape with the right dimensions and
+nothing on it. Reworked, and the changes that actually did the work:
+
+- **The cabin was an upright box.** More than anything else that is what made
+  the car read as a toy. The greenhouse now rakes from z -0.88 and tapers to a
+  fastback, over six stations instead of a slab.
+- **Wheels got the detail they earn.** They are the only part of a car that
+  moves against the bodywork, and a flat grey disc in an arch reads as a wheel
+  on a pull-along toy. Each is now an 18-sided tread, a sidewall, five spokes
+  radiating from a hub cap, and a brake disc with a caliper straddling it - all
+  merged into the one wheel mesh, so the draw-call count did not move.
+- **Racing numbers**, on both doors and on the roof, drawn as seven-segment
+  shapes. Segments rather than a texture: a texture means UV unwrapping a lofted
+  body and shipping an atlas, for two digits. The number comes from the colour
+  index, so the car in the roster is the car on the track.
+- **A darker band along the lower flank**, twin bonnet stripes, wing mirrors on
+  stalks, and exhaust tips. The flank band matters most of the three: without it
+  the side of the car is one unbroken sheet of colour from sill to roof.
+
+Livery is still derived rather than authored - base coat is the colour the
+player chose, accent flips between near-black and near-white on its luminance -
+so ten cars need no art, and adding an eleventh colour needs no art either.
+
+Still **five draw calls a car**: everything opaque merges into the body mesh and
+the wheels share one geometry across all four corners.
+
+### The test caught three things the eye did not
+
+`tools/carmeshtest.ts` went from 30 checks to 51 and failed three of them
+immediately:
+
+- the **door numbers stood 1.3 cm proud of the collider** (x 0.963 against a
+  0.950 half-width), because the digits are laid on top of the roundel and the
+  roundel was already at the body's edge. Both moved inboard.
+- two checks asserted the tyre had *exactly* `CAR.wheelRadius`. An 18-sided
+  tread cannot: its silhouette runs between R at a vertex and R·cos(pi/18)
+  across a flat, 5 mm shallower. The geometry was right and **the test was
+  wrong**, so the test now states the polygon bound instead. Inscribed rather
+  than circumscribed is deliberate - the tyre then never reads wider than the
+  physics radius, and 5 mm of ride height at a flat is invisible.
+
+---
+
+## Car-to-car collision, measured and then changed
+
+Nothing measured contact between cars beyond "did anyone end up in the air",
+which is the one thing that was already fine. `tools/collisiontest.ts` now
+stages the four impacts a race actually produces and reports what came out.
+
+### What was wrong, and what was not
+
+The first suspicion was **penetration**: a 144 km/h rear-end overlapped the two
+hulls by 0.489 m, and a side swipe by 0.614 m. A third of a car buried in
+another looks broken.
+
+It is not worth fixing, and the reason is worth writing down. Sweeping every
+solver knob Rapier exposes - solver iterations to 12, internal PGS passes to 4,
+CCD substeps to 4, prediction distance from 2 mm to 100 mm - moved that number
+by less than a centimetre. It is not the solver failing. At 40 m/s a car covers
+**0.667 m in one 60 Hz step**, so the first frame that can possibly see the
+contact already has the hulls that deep inside each other. Measuring how long it
+lasts settles it: **1 to 3 frames, and zero by 250 ms.** It is a frame of
+overlap at 60 fps, not a pile-up.
+
+What *was* wrong is what the impact did afterwards.
+
+| | before | after |
+|---|---|---|
+| rear-end: hop | 0.185 m | **0.011 m** |
+| rear-end: yaw kick | 24 deg/s | **2 deg/s** |
+| rear-end: struck car shoved to | - | **86 km/h** |
+| T-bone: hop | 0.168 m | **0.000 m** |
+| T-bone: yaw kick | 70 deg/s | **5 deg/s** |
+| T-bone: attitude | up.y 0.956 | **up.y 0.999** |
+| head-on 108 km/h each: after | 0.6 / 0.6 km/h | **cars part** |
+| ten-car race: worst attitude | up.y 0.91 | **up.y 0.98** |
+| ten-car race: greatest height | 0.63 m | **0.20 m** |
+
+Two changes did that.
+
+**`numInternalPgsIterations` 1 → 4.** The default single pass is what let an
+impact hop and slew the struck car. Four settles it, and the step cost did not
+move measurably.
+
+**Car restitution 0.12 → 0.20, with combine rules.** At 0.12 a 144 km/h
+rear-end left the cars locked together and grinding, parting at 20.8 km/h -
+essentially perfectly inelastic. The catch is that restitution is one number
+serving three contacts, and Rapier averages it: raising it made the *road*
+springy under every wheel. So the track and the barriers now combine with
+**Min**, which keeps the car's value strictly for car-to-car.
+
+**0.30 read best on the rig and was still wrong.** It cost races: with cars
+bouncing that hard off the parked car on the grid, one of the five AI stopped
+completing its lap inside the time `roomtest` allows. That check is the reason
+the value is 0.20 and not higher, and it is exactly the kind of thing a rig
+alone would never have shown.
+
+### The harnesses were measuring a simulation nobody runs
+
+Two of them, both found while doing this:
+
+- `drivetest` stepped the cars and the world but **never called `postStep`**,
+  which is part of the server's loop and is what clamps rise and angular speed
+  after the solver.
+- `collisiontest` built its own flat world and so kept the **default solver
+  settings**, which is why it first reported a 0.279 m hop the game does not
+  produce.
+
+`tuneSolver()` is now exported from `vehicle/world.ts` and both the game and the
+harnesses call it, so the settings cannot drift apart again.
+
+Handling is unchanged, which is the point: 0-100 in **2.92 s**, braking
+**1.69 g**, skidpad **1.31 g** - identical to the baseline recorded before any
+of this. Ten AI still finish 10/10 on Interlagos.
+
+---
+
+## A reset button, and the key that never worked
+
+**`R` did nothing.** `InputSource.takeResetRequest()` existed and set a flag,
+and nothing anywhere read it. I had told the user the key worked; it had never
+worked.
+
+There is now a **Reset car (R)** button in the HUD, and the key drives the same
+path. Both ask the server; the client predicts nothing, because where the car
+goes back to is not the client's decision to make.
+
+The server puts the car at `hint` - the waypoint the lap tracker last placed
+that car at - facing along the track there, stationary, with its queued inputs
+dropped. So a reset returns a player **to their own progress facing forwards**.
+It cannot skip a corner and it cannot cut the circuit, which is the property
+that matters when the button is one keypress away for ten strangers.
+
+`RESET_COOLDOWN_SECONDS` (4 s) is in `/shared/` because both ends need it: the
+server enforces it, and the client mirrors it so a press the server is about to
+throw away flashes red instead of green. A button that says "accepted" when
+nothing happened is worse than no button.
+
+Ten checks in `roomtest` cover it: that it lands back on the track, the right
+way up, facing the right way, stationary, **without being granted lap
+progress**, and that a second press inside the cooldown is refused.

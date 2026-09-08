@@ -15,6 +15,7 @@ import {
   INPUT_HZ,
   MAX_PLAYERS,
   RACE_LAPS,
+  RESET_COOLDOWN_SECONDS,
   RESULTS_SECONDS,
   TICK_HZ,
   TICKS_PER_SNAPSHOT,
@@ -116,6 +117,16 @@ export interface RoomHooks {
    * transport can serialise the car array once and splice per client.
    */
   sendSnapshots?(tick: number, carsJson: string, ackSeqOf: (id: number) => number): void;
+  /**
+   * The room has given up on this entrant and removed it. The transport should
+   * close the socket rather than leave it open.
+   *
+   * Without this a timed-out client keeps a live socket to a room that no
+   * longer has an entrant for it: `onReady` returns early, no roster comes
+   * back, snapshots carry no car, and the player sits looking at a lobby whose
+   * Ready button does nothing and which reports no error at all.
+   */
+  evict?(id: number, why: string): void;
 }
 
 export interface Entrant {
@@ -154,6 +165,8 @@ export interface Entrant {
   finishTick: number;
   lastSeenMs: number;
   stuckTicks: number;
+  /** Tick of the last manual reset, for the cooldown. */
+  resetTick: number;
   spawnSlot: number;
 }
 
@@ -253,6 +266,7 @@ export class Room {
       finishTick: -1,
       lastSeenMs: Date.now(),
       stuckTicks: 0,
+      resetTick: -1e9,
       spawnSlot: slot,
     };
     this.entrants.set(id, e);
@@ -334,6 +348,38 @@ export class Room {
     }
   }
 
+  /**
+   * Put a car back on the racing line where it already was.
+   *
+   * The position comes from `hint`, the waypoint the lap tracker last placed
+   * this car at, and the heading from the track at that waypoint. So a reset
+   * returns a player to their own progress facing forwards - it cannot skip a
+   * corner, and it cannot be used to cut the circuit.
+   *
+   * Returns false when it was refused, so the caller can tell the player why
+   * nothing happened rather than leaving them pressing a dead button.
+   */
+  onReset(id: number): boolean {
+    const e = this.entrants.get(id);
+    if (!e || e.ai || !e.car) return false;
+    e.lastSeenMs = Date.now();
+    // Only mid-race: on the grid or in the results there is nothing to recover
+    // from, and the grid positions cars itself.
+    if (this.state !== 'racing' && this.state !== 'countdown') return false;
+    if (e.finished) return false;
+    if (this.tick - e.resetTick < RESET_COOLDOWN_SECONDS * TICK_HZ) return false;
+
+    e.resetTick = this.tick;
+    const q = this.world.query;
+    const w = q.track.waypoints[e.hint]!;
+    e.car.reset({ x: w.p[0], y: w.p[1] + 0.6, z: w.p[2] }, q.headingAt(e.hint));
+    e.stuckTicks = 0;
+    // Anything queued describes a car that no longer exists at that position.
+    e.pending.length = 0;
+    e.current = { ...NEUTRAL_INPUT };
+    return true;
+  }
+
   onReady(id: number, ready: boolean): void {
     const e = this.entrants.get(id);
     if (!e) return;
@@ -371,6 +417,7 @@ export class Room {
       this.firstReadyTick = -1;
       this.leaderFinishTick = -1;
       for (const e of this.entrants.values()) e.ready = false;
+      this.parkOnGrid();
       this.hooks.broadcast({ t: 'roster', players: this.roster() });
     }
 
@@ -388,6 +435,28 @@ export class Room {
     if (this.state === 'grid') return Math.max(0, 3 - elapsed);
     if (this.state === 'finished') return Math.max(0, RESULTS_SECONDS - elapsed);
     return null;
+  }
+
+  /**
+   * Put the surviving cars back on the grid between races.
+   *
+   * A race ends wherever it ends. Without this a player who finished in the
+   * gravel sits in the gravel through the whole lobby, facing a barrier or
+   * upside down against a tyre wall, until the next grid forms. It looks
+   * broken, and it is the first thing anyone waiting for a race looks at.
+   *
+   * Deliberately not `placeOnGrid`: that decides race entry, and everyone has
+   * just been un-readied, so it would take every car away and leave the lobby
+   * with nothing to show.
+   */
+  private parkOnGrid(): void {
+    let slot = 0;
+    for (const e of this.entrants.values()) {
+      if (!e.car) continue;
+      const g = this.track.spawnGrid[slot % this.track.spawnGrid.length]!;
+      e.spawnSlot = slot++;
+      e.car.reset({ x: g.p[0], y: g.p[1], z: g.p[2] }, g.rotY);
+    }
   }
 
   /**
@@ -657,7 +726,11 @@ export class Room {
     const now = Date.now();
     for (const e of [...this.entrants.values()]) {
       if (e.ai) continue;
-      if (now - e.lastSeenMs > CLIENT_TIMEOUT_MS) this.leave(e.id);
+      if (now - e.lastSeenMs <= CLIENT_TIMEOUT_MS) continue;
+      this.leave(e.id);
+      // Tell the transport, so the socket goes with the entrant. A player who
+      // is dropped should see that they were dropped.
+      this.hooks.evict?.(e.id, 'timed out');
     }
   }
 

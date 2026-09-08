@@ -267,6 +267,19 @@ export class Ui {
     this.lapStart = Date.now();
   }
 
+  /** Wired by main.ts; also reachable from the R key. */
+  set onReset(fn: (() => void) | null) {
+    this.hud.onReset = fn;
+  }
+
+  setResetVisible(on: boolean): void {
+    this.hud.setResetVisible(on);
+  }
+
+  flashReset(accepted: boolean): void {
+    this.hud.flashReset(accepted);
+  }
+
   setSpeed(kmh: number): void {
     this.state.speedKph = kmh;
   }

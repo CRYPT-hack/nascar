@@ -14,7 +14,13 @@ import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { COUNTDOWN_SECONDS, TICK_HZ } from '../shared/constants';
+import {
+  CLIENT_TIMEOUT_MS,
+  COUNTDOWN_SECONDS,
+  RESET_COOLDOWN_SECONDS,
+  RESULTS_SECONDS,
+  TICK_HZ,
+} from '../shared/constants';
 import type { ServerMsg } from '../shared/protocol';
 import type { TrackData } from '../shared/track-schema';
 import { Room, type RoomOptions } from '../server/room';
@@ -24,6 +30,8 @@ import { initPhysics } from '../vehicle/world';
 const here = dirname(fileURLToPath(import.meta.url));
 
 let failures = 0;
+const RESET_COOLDOWN_TICKS = RESET_COOLDOWN_SECONDS * TICK_HZ + 2;
+
 let checks = 0;
 
 function check(what: string, cond: boolean, detail = ''): void {
@@ -162,6 +170,37 @@ async function main(): Promise<void> {
         .filter((r) => r.totalMs !== null)
         .every((r, i, arr) => i === 0 || (arr[i - 1]!.totalMs ?? 0) <= (r.totalMs ?? 0)),
     );
+
+    // A race ends wherever it ends, and the lobby that follows should not be
+    // showing the wreckage. Strand the car a quarter of the way round the
+    // circuit - upright and on the racing line, so the stuck-car rescue has no
+    // reason to fire and cannot be what moves it - and check the return to
+    // lobby puts it back on the grid.
+    const w = track.waypoints[Math.floor(track.waypoints.length / 4)]!;
+    a.car?.reset({ x: w.p[0], y: w.p[1] + 0.6, z: w.p[2] }, 0);
+    const strandedFromGrid = Math.min(
+      ...track.spawnGrid.map((g) => Math.hypot(g.p[0] - w.p[0], g.p[2] - w.p[2])),
+    );
+    check(
+      'the stranded car really is away from the grid',
+      strandedFromGrid > 50,
+      `${strandedFromGrid.toFixed(0)} m from the nearest slot`,
+    );
+
+    // The room only enters 'finished' once the leader is home and the grace
+    // period is up, so wait for the lobby rather than assume a fixed delay.
+    for (let i = 0; i < RESULTS_SECONDS + 90 && room.state !== 'lobby'; i++) run(room, 1);
+    eq('the room returns to the lobby', room.state, 'lobby');
+    const p = a.car?.body.translation();
+    const parkedFromGrid = p
+      ? Math.min(...track.spawnGrid.map((g) => Math.hypot(g.p[0] - p.x, g.p[2] - p.z)))
+      : Infinity;
+    check(
+      'and parks the stranded car back on the grid',
+      parkedFromGrid < 2,
+      `${parkedFromGrid.toFixed(1)} m from the nearest slot`,
+    );
+
     room.destroy();
   }
 
@@ -235,6 +274,78 @@ async function main(): Promise<void> {
     check('the remaining one is intact', room.entrants.has(b.id));
     run(room, 0.5);
     check('the room keeps stepping', room.tick > 0);
+    room.destroy();
+  }
+
+  // -------------------------------------------------------------------------
+  console.log('\na timed-out client is evicted, not left as a ghost');
+  {
+    const evicted: number[] = [];
+    const room = new Room(
+      track,
+      { send: () => {}, broadcast: () => {}, evict: (id) => evicted.push(id) },
+      {},
+    );
+    const a = room.join('Ghost', 0);
+    room.step();
+    check('present while it is still being heard from', room.entrants.has(a.id));
+
+    // Reach past the timeout without burning wall time on it.
+    a.lastSeenMs = Date.now() - CLIENT_TIMEOUT_MS - 1000;
+    room.step();
+
+    check('the entrant is removed', !room.entrants.has(a.id));
+    eq('and the transport is told to close the socket', evicted.join(','), String(a.id));
+
+    // This is the whole point. A client whose entrant was gone but whose socket
+    // stayed open could not ready, got no roster back, and saw no error - it just
+    // sat in a lobby whose Ready button silently did nothing.
+    room.onReady(a.id, true);
+    check('a ready from the ghost changes nothing', room.state === 'lobby');
+    room.destroy();
+  }
+
+  // -------------------------------------------------------------------------
+  console.log('\nreset puts a car back on the line without gaining ground');
+  {
+    const { room } = makeRoom(track, { laps: 3 });
+    const a = room.join('Spinner', 0);
+    room.onReady(a.id, true);
+    run(room, 1 + 3 + COUNTDOWN_SECONDS + 1);
+    eq('racing', room.state, 'racing');
+
+    // Drive far enough to have real progress to protect, then wreck it:
+    // off the road, upside down, pointing backwards.
+    room.onInput(a.id, { t: 'input', seq: 1, throttle: 1, brake: 0, steer: 0, handbrake: false });
+    run(room, 6);
+    const before = a.hint;
+    const q = room.world.query;
+    const w = q.track.waypoints[before]!;
+    a.car!.reset({ x: w.p[0] + 12, y: w.p[1] + 0.4, z: w.p[2] + 12 }, q.headingAt(before) + Math.PI);
+    a.car!.body.setRotation({ x: 1, y: 0, z: 0, w: 0 }, true); // on its roof
+    run(room, 2);
+    check('the car really is inverted first', a.car!.up().y < 0);
+
+    check('the reset is accepted', room.onReset(a.id));
+    const p = a.car!.body.translation();
+    const loc = q.locate(p.x, p.y, p.z);
+    check('it lands back on the track', loc.onTrack, `lateral ${loc.lateral.toFixed(2)} m`);
+    check('the right way up', a.car!.up().y > 0.9, `up.y ${a.car!.up().y.toFixed(3)}`);
+
+    // Facing along the track, not against it.
+    const heading = q.headingAt(a.hint);
+    const fwd = a.car!.forward();
+    const want = { x: -Math.sin(heading), z: -Math.cos(heading) };
+    const dot = fwd.x * want.x + fwd.z * want.z;
+    check('and facing the right way', dot > 0.9, `dot ${dot.toFixed(3)}`);
+
+    check('it is stationary', a.car!.speed < 0.5, `${a.car!.speed.toFixed(2)} m/s`);
+    check('no lap progress was granted', a.lap.lap === 0);
+
+    // The cooldown is what stops it being tapped through every corner.
+    check('a second press straight away is refused', !room.onReset(a.id));
+    run(room, RESET_COOLDOWN_TICKS);
+    check('and allowed again once the cooldown passes', room.onReset(a.id));
     room.destroy();
   }
 

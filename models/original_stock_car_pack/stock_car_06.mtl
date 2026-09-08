@@ -1,0 +1,46 @@
+# Purple Shift — original stock-car material set
+newmtl paint
+Kd 0.3882 0.2471 0.5843
+Ks 0.2500 0.2500 0.2500
+Ns 90
+
+newmtl accent
+Kd 0.1961 0.7137 0.7922
+Ks 0.1800 0.1800 0.1800
+Ns 65
+
+newmtl number
+Kd 0.9647 0.9686 0.9529
+Ks 0.1200 0.1200 0.1200
+Ns 35
+
+newmtl glass
+Kd 0.0450 0.0950 0.1250
+Ks 0.7000 0.7000 0.7000
+Ns 180
+d 0.62
+
+newmtl tire
+Kd 0.0250 0.0250 0.0280
+Ks 0.0800 0.0800 0.0800
+Ns 18
+
+newmtl wheel
+Kd 0.2000 0.2200 0.2400
+Ks 0.6500 0.6500 0.6500
+Ns 120
+
+newmtl grille
+Kd 0.0150 0.0170 0.0200
+Ks 0.2000 0.2000 0.2000
+Ns 35
+
+newmtl light
+Kd 0.9000 0.9300 0.9500
+Ks 0.9000 0.9000 0.9000
+Ns 200
+
+newmtl brake
+Kd 0.7000 0.2200 0.1200
+Ks 0.4500 0.4500 0.4500
+Ns 80
