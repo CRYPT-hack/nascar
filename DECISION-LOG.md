@@ -1390,3 +1390,53 @@ One earlier number in this session was wrong and is worth flagging: a first pass
 reported shadows costing 5.35 ms of a 7.20 ms frame. That reading included
 one-off shader compilation and shadow-map allocation. In steady state the same
 scene was 1.44 ms total. Warm up before timing a GPU.
+
+---
+
+## A still camera, and making the GPU switch visible
+
+### The camera lag is not frame rate
+
+`posTau` is 0.1: the chase camera is a tenth of a second behind where it wants
+to be. At 60 m/s that is **six metres** of trailing, and it grows with speed,
+which is exactly the complaint - fine at low speed, floaty when quick. The
+smoothing is frame-rate independent (`1 - exp(-dt/tau)`), so this is tuning and
+not a dropped-frame bug, and no amount of GPU will fix it.
+
+`STILL` keeps the geometry and takes the lag out: `posTau` 0.1 -> 0.03,
+`dirTau` 0.16 -> 0.05, and pull-back per unit speed 0.055 -> 0.018 so the car
+does not shrink away down a straight. **C** cycles it, and the choice is
+remembered.
+
+What it deliberately does *not* do is lock to chassis yaw. That is what the
+chase camera exists to avoid - a rigidly bolted camera swings hard the moment
+the car steps out of line, which is precisely when the player needs to see
+ahead. The blend toward direction of travel stays; only the delay goes.
+
+`setTuning` does not reset the smoothing, so switching mid-corner eases across
+instead of cutting.
+
+### The discrete GPU
+
+This machine has an **RTX 4050** as well as the Intel UHD, and the browser is
+choosing the Intel. `powerPreference: 'high-performance'` is already set on the
+context; it is a hint, and Windows overrode it. Choosing the adapter is a
+system setting, so it is the user's to make, not this project's.
+
+What the code can do, and now does:
+
+- **Name the GPU on screen at boot** - "Intel(R) UHD Graphics · graphics low".
+  On a laptop with two adapters, which one the browser picked is the single most
+  useful thing to be able to see, and there was no way to see it.
+- **Remember the tier against the GPU it was chosen for.** Otherwise a tier
+  detected for the integrated chip sticks after the switch and hides the whole
+  upgrade. A stored entry from a different adapter is re-detected rather than
+  trusted: verified by planting an entry claiming the RTX and reloading, which
+  correctly reported "GPU changed, re-detected as Intel(R) UHD Graphics".
+- Values written by the previous build were a bare string rather than JSON;
+  those fail to parse and fall through to detection, which is the right
+  outcome, and the next change rewrites them.
+
+`short()` is checked against the four renderer strings that actually occur -
+Intel UHD, the RTX 4050, SwiftShader, and empty - and maps them to low, high,
+low, medium.

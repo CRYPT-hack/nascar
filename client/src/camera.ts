@@ -44,9 +44,44 @@ export const CHASE: CameraTuning = {
   fovPerSpeed: 0.22,
 };
 
+/**
+ * Rigid. The same geometry, with the lag taken out.
+ *
+ * `posTau` 0.1 means the camera is a tenth of a second behind where it wants to
+ * be, which at 60 m/s is **six metres** of trailing — on a straight that reads
+ * as the car sliding away from you, and it gets worse the faster you go. The
+ * smoothing is frame-rate independent, so this is not a frame-rate bug; it is
+ * simply too much lag to feel connected to.
+ *
+ * The direction blend toward travel is kept. Locking the camera to chassis yaw
+ * instead is what the chase camera exists to avoid: it swings hard the moment
+ * the car steps out of line, which is exactly when you need to see ahead. What
+ * changes here is only *how quickly* the camera gets where it is going, plus a
+ * shorter pull-back so the car does not shrink away at speed.
+ */
+export const STILL: CameraTuning = {
+  distance: 7.0,
+  distancePerSpeed: 0.018,
+  height: 2.8,
+  lookAhead: 9,
+  posTau: 0.03,
+  dirTau: 0.05,
+  fov: 66,
+  fovPerSpeed: 0.22,
+};
+
+export type CameraMode = 'chase' | 'still';
+
+export const CAMERA_MODES: readonly CameraMode[] = ['chase', 'still'];
+
+export const CAMERA_TUNING: Record<CameraMode, CameraTuning> = {
+  chase: CHASE,
+  still: STILL,
+};
+
 export class ChaseCamera {
   readonly camera: THREE.PerspectiveCamera;
-  private readonly tuning: CameraTuning;
+  private tuning: CameraTuning;
 
   private smoothedDir = new THREE.Vector3(0, 0, -1);
   private smoothedPos = new THREE.Vector3();
@@ -56,6 +91,15 @@ export class ChaseCamera {
   constructor(aspect: number, tuning: CameraTuning = CHASE) {
     this.tuning = tuning;
     this.camera = new THREE.PerspectiveCamera(tuning.fov, aspect, 0.25, 4000);
+  }
+
+  /**
+   * Switch rig. Deliberately does not reset: the smoothed position and
+   * direction are still valid, so the view eases into the new tuning instead of
+   * cutting, and a mid-corner change does not jump.
+   */
+  setTuning(tuning: CameraTuning): void {
+    this.tuning = tuning;
   }
 
   resize(aspect: number): void {

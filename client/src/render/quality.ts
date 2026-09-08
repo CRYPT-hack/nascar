@@ -114,20 +114,52 @@ export function resolveQuality(search: string): { quality: Quality; gpu: string;
   const asked = new URLSearchParams(search).get('quality');
   if (isQuality(asked)) return { quality: asked, gpu, why: 'from the URL' };
 
-  let saved: string | null = null;
+  // The remembered tier is stored against the GPU it was chosen for. Switching
+  // a laptop from its integrated chip to its discrete one changes what the
+  // machine can do completely, and a tier picked for the weaker one would
+  // otherwise stick and hide the upgrade.
   try {
-    saved = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) {
+      const saved = JSON.parse(raw) as { quality?: string; gpu?: string };
+      if (isQuality(saved.quality ?? null)) {
+        if (saved.gpu === gpu) {
+          return { quality: saved.quality as Quality, gpu, why: 'remembered' };
+        }
+        // Same browser, different GPU: re-detect rather than trust the old pick.
+        const fresh = detectQuality(gpu);
+        return { quality: fresh, gpu, why: `GPU changed, re-detected as ${short(gpu)}` };
+      }
+    }
   } catch {
-    /* private window: fall through to detection */
+    /* private window, or something else wrote the key: fall through */
   }
-  if (isQuality(saved)) return { quality: saved, gpu, why: 'remembered' };
 
-  return { quality: detectQuality(gpu), gpu, why: `detected from ${gpu || 'an unknown GPU'}` };
+  return { quality: detectQuality(gpu), gpu, why: `detected ${short(gpu)}` };
+}
+
+/** The part of a WebGL renderer string worth showing a person. */
+export function short(gpu: string): string {
+  if (!gpu) return 'an unknown GPU';
+  // ANGLE wraps the real name: "ANGLE (Intel, Intel(R) UHD Graphics (0x...)
+  // Direct3D11 vs_5_0 ps_5_0, D3D11)". The vendor is the first field and the
+  // adapter the second, and the adapter itself contains brackets, so this
+  // splits on the comma rather than trying to match balanced parentheses.
+  let name = gpu;
+  if (name.startsWith('ANGLE (')) {
+    const parts = name.slice('ANGLE ('.length, -1).split(', ');
+    name = parts[1] ?? parts[0] ?? name;
+  }
+  return name
+    .replace(/\s*\(0x[0-9A-Fa-f]+\)/, '')   // the PCI id
+    .replace(/\s+Direct3D.*$/, '')          // the backend suffix
+    .replace(/\s+vs_\d.*$/, '')
+    .trim();
 }
 
 export function rememberQuality(q: Quality): void {
   try {
-    localStorage.setItem(STORAGE_KEY, q);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ quality: q, gpu: probeRenderer() }));
   } catch {
     /* nothing to do, and not worth failing over */
   }

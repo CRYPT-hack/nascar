@@ -29,6 +29,7 @@ const KEYS = {
   handbrake: ['Space'],
   reset: ['KeyR'],
   quality: ['KeyQ'],
+  camera: ['KeyC'],
 } as const;
 
 export class InputSource {
@@ -40,6 +41,7 @@ export class InputSource {
   /** Set for one frame when the player asks to be respawned. */
   resetRequested = false;
   qualityRequested = false;
+  cameraRequested = false;
 
   /** True while the player is typing into a form, so driving keys are ignored. */
   suspended = false;
@@ -60,6 +62,7 @@ export class InputSource {
     this.down.add(e.code);
     if (KEYS.reset.includes(e.code as never)) this.resetRequested = true;
     if (KEYS.quality.includes(e.code as never)) this.qualityRequested = true;
+    if (KEYS.camera.includes(e.code as never)) this.cameraRequested = true;
   };
 
   private readonly onKeyUp = (e: KeyboardEvent): void => {
@@ -138,6 +141,12 @@ export class InputSource {
     const q = this.qualityRequested;
     this.qualityRequested = false;
     return q;
+  }
+
+  takeCameraRequest(): boolean {
+    const c = this.cameraRequested;
+    this.cameraRequested = false;
+    return c;
   }
 }
 
