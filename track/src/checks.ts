@@ -231,6 +231,28 @@ export function checkTrackGeometry(track: TrackData): CheckResult {
     );
   }
 
+  // --- Every grid slot must be on the road --------------------------------
+  //
+  // The grid walks backwards from the start line, one car every 6 m. At ten
+  // cars that stays on the pit straight and where the slots land is obvious.
+  // At twenty-five it reaches back through Arquibancadas, and a slot that has
+  // drifted onto the grass or past the barrier puts a car there at lights out.
+  let worstSlot = 0;
+  for (let i = 0; i < track.spawnGrid.length; i++) {
+    const slot = track.spawnGrid[i]!;
+    const q = sampler.query(slot.p[0], slot.p[2]);
+    if (q.surface !== 'asphalt') {
+      problems.push(`spawn slot ${i} is on ${q.surface}, not asphalt`);
+    }
+    // Half a car's width of margin to the road edge, so nobody starts with a
+    // wheel hanging over the kerb.
+    const margin = q.width / 2 - Math.abs(q.lateral);
+    worstSlot = i === 0 ? margin : Math.min(worstSlot, margin);
+    if (margin < 1.0) {
+      problems.push(`spawn slot ${i} is ${margin.toFixed(2)} m from the road edge`);
+    }
+  }
+
   // --- The ribbon must not overlap itself ---------------------------------
   let footprint = 0;
   for (let i = 0; i < n; i++) {
@@ -266,6 +288,8 @@ export function checkTrackGeometry(track: TrackData): CheckResult {
       footprintHalfWidth: Number(footprint.toFixed(1)),
       maxCentreLateral: Number(maxCentreLateral.toFixed(4)),
       maxHeightErr: Number(maxHeightErr.toFixed(5)),
+      gridSlots: track.spawnGrid.length,
+      worstSlotMargin: Number(worstSlot.toFixed(2)),
     },
   };
 }

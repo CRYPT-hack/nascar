@@ -22,6 +22,7 @@ import { WebSocketServer, type WebSocket } from 'ws';
 import { DEFAULT_PORT, PROTOCOL_VERSION, TICK_HZ } from '../shared/constants';
 import type { ClientMsg, ServerMsg } from '../shared/protocol';
 import type { TrackData } from '../shared/track-schema';
+import { AvatarStore } from './avatars';
 import { RemoteControlHub } from './remote-control';
 import { Room, type RoomOptions } from './room';
 
@@ -95,6 +96,8 @@ export class GameServer {
   private fatalReported = false;
   /** Phone-as-steering-wheel pairing, on the `/pair` path. */
   readonly remote = new RemoteControlHub();
+  /** Driver photos, served over HTTP rather than either socket. */
+  readonly avatars = new AvatarStore();
   readonly secure: boolean;
 
   constructor(track: TrackData, opts: ServerOptions = {}) {
@@ -473,6 +476,66 @@ export class GameServer {
         }
         res.writeHead(204).end();
       });
+      return;
+    }
+
+    // --- driver photos ------------------------------------------------------
+    // These are reached cross-origin during development, where the pages are
+    // served by vite on 5173 and this server owns 8080. In the built demo
+    // everything is on one port and none of this applies — which is exactly why
+    // it is easy to miss until a dev session silently drops every upload.
+    // Open to any origin deliberately: it is a venue LAN, and the routes below
+    // are already bounded in size, type and count.
+    if (path === '/avatars' || path.startsWith('/avatar/')) {
+      res.setHeader('access-control-allow-origin', '*');
+      res.setHeader('access-control-allow-methods', 'GET, POST, PUT, OPTIONS');
+      res.setHeader('access-control-allow-headers', 'content-type');
+      if (req.method === 'OPTIONS') {
+        // An image/jpeg body is not a "simple" content type, so the browser
+        // preflights the upload.
+        res.writeHead(204).end();
+        return;
+      }
+    }
+
+    // A car's photo, posted by that player's laptop once their phone has taken
+    // it, and fetched by every other laptop so the whole grid sees it.
+    const avatarMatch = /^\/avatar\/(\d+)$/.exec(path);
+    if (avatarMatch) {
+      const id = Number(avatarMatch[1]);
+      if (req.method === 'POST' || req.method === 'PUT') {
+        const chunks: Buffer[] = [];
+        let size = 0;
+        req.on('data', (c: Buffer) => {
+          size += c.length;
+          // Hang up rather than buffer: this listens on a venue LAN and the
+          // failure worth preventing is memory, not a bad photo.
+          if (size > 64 * 1024) req.destroy();
+          else chunks.push(c);
+        });
+        req.on('end', () => {
+          const ok = this.avatars.set(id, Buffer.concat(chunks));
+          res.writeHead(ok ? 204 : 400).end();
+        });
+        return;
+      }
+      const bytes = this.avatars.get(id);
+      if (!bytes) {
+        res.writeHead(404).end();
+        return;
+      }
+      res.writeHead(200, {
+        'content-type': 'image/jpeg',
+        // Immutable per version: the URL carries ?v= so a new photo is a new URL.
+        'cache-control': 'public, max-age=31536000, immutable',
+      });
+      res.end(bytes);
+      return;
+    }
+
+    if (path === '/avatars') {
+      res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-cache' });
+      res.end(JSON.stringify(this.avatars.manifest()));
       return;
     }
 

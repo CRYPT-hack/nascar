@@ -161,6 +161,7 @@ function main(): void {
     console.log(`    footprint       +/- ${stats.footprintHalfWidth} m to barrier`);
     console.log(`    gravel run-off  ${stats.gravelPercent}% of edges`);
     console.log(`    sampler error   ${stats.maxCentreLateral} m lateral, ${stats.maxHeightErr} m height`);
+    console.log(`    grid            ${stats.gridSlots} slots, closest ${stats.worstSlotMargin} m to the edge`);
     for (const w of warnings) console.log(`    note: ${w}`);
     if (problems.length) {
       console.log(`    GEOMETRY PROBLEMS:`);

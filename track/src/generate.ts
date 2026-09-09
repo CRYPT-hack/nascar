@@ -13,6 +13,7 @@
 
 import type { SurfaceKind, Vec3 } from '../../shared/protocol';
 import type { Checkpoint, SpawnSlot, TrackData, Waypoint } from '../../shared/track-schema';
+import { MAX_PLAYERS } from '../../shared/constants';
 import { MIN_TRACK_WIDTH, measureLapLength, validateTrack } from '../../shared/track-schema';
 import type { CircuitSpec, ControlKey } from './circuits';
 import { arcLengths, curvature, resampleByArcLength, sampleClosed, smoothClosed, type P2 } from './spline';
@@ -283,7 +284,7 @@ function buildSpawnGrid(wps: Waypoint[], spacing: number): SpawnSlot[] {
   const stepsPerRow = GRID_ROW_GAP / spacing;
   const setbackSteps = GRID_SETBACK / spacing;
 
-  for (let i = 0; i < 10; i++) {
+  for (let i = 0; i < MAX_PLAYERS; i++) {
     // Walk backwards along the centreline from the start/finish line.
     const back = setbackSteps + i * stepsPerRow;
     const idx = ((Math.round(-back) % n) + n) % n;

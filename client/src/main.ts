@@ -31,6 +31,9 @@ import { CAMERA_MODES, CAMERA_TUNING, ChaseCamera, type CameraMode } from './cam
 import { Connection, defaultServerUrl, netSimFromQuery } from './connection';
 import { InputSource } from './input';
 import { PhoneLink } from './phone-link';
+import * as THREE from 'three';
+
+import { AvatarStore as PhotoStore, avatarUrl } from './render/avatars';
 import { Sound } from './sound';
 import { NetStats } from './netstats';
 import { INPUT_REDUNDANCY, PredictedCar } from './prediction';
@@ -78,6 +81,13 @@ class Game {
   private surface: CarSnap['surface'] = 'asphalt';
   /** Last input actually sent, so the audio can hear throttle and brake. */
   private lastInput: CarInput = { ...NEUTRAL_INPUT };
+  /** Race photo waiting to be published, if it arrived before the car id did. */
+  private pendingPhoto: string | null = null;
+  /** Everyone's driver photos, polled from the server. */
+  private readonly photos = new PhotoStore();
+  /** Set once any car has a photo, so the billboard pass costs nothing before then. */
+  private photosVisible = false;
+  private readonly cameraWorld = new THREE.Vector3();
   private readonly stats = new NetStats();
   private readonly ui = new Ui();
   conn!: Connection;
@@ -149,6 +159,21 @@ class Game {
     // the moment it goes stale, so a phone leaving Wi-Fi hands back to the keys
     // rather than holding the last steering angle into a wall.
     this.input.external = () => this.phone.current();
+    // A photo can arrive before the server has told us our car id, so it is
+    // held until there is somewhere to publish it to.
+    this.phone.onPhoto = (dataUrl) => {
+      this.pendingPhoto = dataUrl;
+      void this.publishPhoto();
+    };
+
+    // A photo can arrive before or after the car it belongs to has a view, so
+    // both directions are covered: new photos are applied here, and viewFor
+    // applies any photo already held when it builds a view.
+    this.photos.onPhoto = (id, texture) => {
+      this.views.get(id)?.setPhoto(texture);
+      this.photosVisible = true;
+    };
+    this.photos.start();
     this.phone.onChange = () => this.ui.setPhoneLink(this.phone.status, this.phone.code);
     this.ui.setPhoneLink(this.phone.status, this.phone.code);
 
@@ -252,6 +277,7 @@ class Game {
         this.myColor = msg.color;
         this.laps = msg.laps;
         this.ui.setRaceLaps(msg.laps);
+        void this.publishPhoto();
         this.ui.showRoster([], this.myId);
         break;
 
@@ -560,7 +586,37 @@ class Game {
       cars: this.views.size,
     });
 
+    // Photos turn to face the viewer. Done here, after the cars have been posed
+    // and before the draw, so a billboard never lags a frame behind its car.
+    if (this.photosVisible) {
+      this.camera.camera.getWorldPosition(this.cameraWorld);
+      for (const v of this.views.values()) v.faceCamera(this.cameraWorld);
+    }
+
     this.scene.render(this.camera.camera);
+  }
+
+  /**
+   * Upload the local player's race photo so every other client can fetch it.
+   *
+   * Over HTTP rather than either socket: the game protocol is frozen and
+   * carries snapshots that an image would sit in front of, and the pairing
+   * socket only reaches this one phone.
+   */
+  private async publishPhoto(): Promise<void> {
+    const dataUrl = this.pendingPhoto;
+    if (!dataUrl || this.myId < 0) return;
+    this.pendingPhoto = null;
+    try {
+      const body = await (await fetch(dataUrl)).blob();
+      const res = await fetch(avatarUrl(this.myId), { method: 'POST', body });
+      if (!res.ok) throw new Error(`server said ${res.status}`);
+    } catch (err) {
+      // A failed upload costs a plain car, not a race — but it is said out
+      // loud. Swallowing it silently hid a CORS failure that dropped every
+      // photo in development while looking exactly like "nobody took one".
+      console.warn('race photo upload failed:', err);
+    }
   }
 
   private viewFor(id: number, colorIndex: number, isLocal: boolean): CarView {
@@ -569,6 +625,11 @@ class Game {
       v = new CarView(colorIndex, isLocal);
       this.views.set(id, v);
       this.scene.add(v.group);
+      const photo = this.photos.textureFor(id);
+      if (photo) {
+        v.setPhoto(photo);
+        this.photosVisible = true;
+      }
     }
     return v;
   }

@@ -10,8 +10,10 @@
  * sentence is this file.
  */
 
+import QRCode from 'qrcode';
 import { CAR_COLOR_NAMES, CAR_COLORS, RACE_LAPS } from '../../../shared/constants';
 import type { PlayerInfo, ResultEntry } from '../../../shared/protocol';
+import { controllerUrlWithCode } from '../phone-link';
 import { formatLapTime } from './hud';
 import './hud.css';
 
@@ -64,6 +66,22 @@ export interface PhonePairing {
   status: 'connecting' | 'waiting' | 'paired' | 'offline';
   code: string | null;
   url: string;
+}
+
+/**
+ * Render a QR code into a canvas and return it.
+ * Falls back silently if generation fails (no camera, no canvas support).
+ */
+function makeQrCanvas(text: string): HTMLCanvasElement | null {
+  const canvas = document.createElement('canvas');
+  // QRCode.toCanvas is async-free when called with a canvas element directly.
+  // We fire-and-forget and the canvas updates itself in-place.
+  QRCode.toCanvas(canvas, text, {
+    width: 160,
+    margin: 2,
+    color: { dark: '#0a0e16', light: '#ffffff' },
+  }).catch(() => { /* silently ignore */ });
+  return canvas;
 }
 
 export interface JoinOptions {
@@ -356,12 +374,28 @@ export function phoneCard(p: PhonePairing): HTMLElement {
   }
 
   const body = el('div', 'phone-body');
-  body.append(el('div', 'phone-code', p.code));
+
+  // QR code — encodes full URL with code pre-filled so scanning skips typing.
+  const qrUrl = controllerUrlWithCode(p.code);
+  const qrCanvas = makeQrCanvas(qrUrl);
+  if (qrCanvas) {
+    const qrWrap = el('div', 'phone-qr');
+    qrWrap.append(qrCanvas);
+    const qrHint = el('div', 'phone-qr-hint', 'Scan to open controller on your phone');
+    qrWrap.append(qrHint);
+    body.append(qrWrap);
+  }
+
+  // Fallback: manual code + URL for those who can't scan.
+  const manual = el('div', 'phone-manual');
+  manual.append(el('div', 'phone-code', p.code));
   const how = el('div', 'phone-sub');
-  how.append(document.createTextNode('On your phone open '));
+  how.append(document.createTextNode('Or open '));
   how.append(el('b', 'phone-url', p.url.replace(/^https?:\/\//, '')));
   how.append(document.createTextNode(' and enter this code.'));
-  body.append(how);
+  manual.append(how);
+  body.append(manual);
+
   card.append(body);
   return card;
 }

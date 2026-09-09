@@ -33,6 +33,15 @@ const HOST_IDLE_MS = 30 * 60_000;
 /** Control frames above this rate are dropped. 30 Hz is the input rate. */
 const MAX_CONTROL_HZ = 90;
 
+/**
+ * Largest driver photo the relay will carry, as a base64 data URL.
+ *
+ * The phone downscales to 160 px before sending, which lands near 8 KB; this is
+ * generous enough for a bad camera and small enough that it cannot be used to
+ * push a laptop over on the venue network.
+ */
+const MAX_PHOTO_CHARS = 96 * 1024;
+
 export interface ControlFrame {
   steer: number;
   throttle: number;
@@ -119,6 +128,11 @@ export class RemoteControlHub {
       case 'ctl':
         this.relayControl(ws, msg);
         break;
+      case 'photo':
+        // One-shot, lobby-time, and far larger than a control frame — so it is
+        // its own message rather than a field on one.
+        this.relayPhoto(ws, msg);
+        break;
       case 'ack':
         // Latency probe coming back the other way: the laptop echoes the phone's
         // own sequence and timestamp, so the phone can measure round trip
@@ -199,6 +213,15 @@ export class RemoteControlHub {
     };
     // `s` rides along untouched so the laptop can echo it back for timing.
     send(pair.host, { t: 'ctl', ...frame, s: msg['s'] });
+  }
+
+  private relayPhoto(ws: WebSocket, msg: Record<string, unknown>): void {
+    const pair = this.bySocket.get(ws);
+    if (!pair || pair.phone !== ws) return;
+    const data = msg['data'];
+    if (typeof data !== 'string' || data.length > MAX_PHOTO_CHARS) return;
+    if (!data.startsWith('data:image/jpeg;base64,')) return;
+    send(pair.host, { t: 'photo', data });
   }
 
   private relayAck(ws: WebSocket, msg: Record<string, unknown>): void {

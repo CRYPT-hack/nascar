@@ -124,3 +124,40 @@ actually reached, so the message cannot be used to gain track position.
 enforces the gap between resets, and the client mirrors it so the button can
 refuse a press honestly rather than flashing "accepted" at a request the server
 is about to discard.
+
+## 2026-09-09 — shared/constants.ts — MAX_PLAYERS 10 -> 25, CAR_COLORS 10 -> 25
+
+**Instance A: this raises the grid size ceiling. Your gate runs were measured at
+ten cars and are still valid for ten; they say nothing about twenty-five.**
+
+`MAX_PLAYERS` is 25. `CAR_COLORS` and `CAR_COLOR_NAMES` grew to 25 entries to
+match, since a colour index is now allowed to reach 24. Both arrays were already
+the same length and still are.
+
+No type, field or wire shape changed. `MAX_PLAYERS` was already only a default:
+`Room` takes `opts.maxPlayers`, and the server entry now passes `CARS` from the
+environment, so the running grid is chosen per race and defaults to the ceiling.
+
+The spawn grid is generated to `MAX_PLAYERS` slots, so `public/track/*.json` has
+25 entries where it had 10. Everything that reads it already bounds itself by
+`track.spawnGrid.length`, so a shorter track file is still safe.
+
+### Why 25, and what it costs
+
+Measured with `tools/gridscale.ts`, added for this. Simulation cost is **linear**
+in the number of cars — Rapier's broad-phase is not the problem — at roughly
+0.68 ms per car plus 0.28 ms fixed **on a thermally throttled laptop** whose
+`cpubench` ten-car step reads 7.06 ms against the ~1 ms a healthy machine gives.
+
+So on that throttled machine 25 cars needs 17.4 ms against a 16.67 ms budget,
+and 23 fit. Scaled to a machine that is not throttling, the same linear cost puts
+25 cars near 2.5 ms and well inside budget. The ceiling is the hardware, not the
+code, which is why it is not hardcoded to one number:
+
+`server/index.ts` now watches `room.tickMs` and warns the host once, with the
+measured p95 and the car count, when the grid they chose does not hold 60 Hz on
+the machine they are on. Verified — it fired at 25 cars on this laptop with
+"p95 20.8 ms against a 16.7 ms budget".
+
+Pick `CARS` for the venue machine. `npx tsx tools/gridscale.ts` prints the curve
+and the largest grid that fits, and `cpubench.ts` first says whether to believe it.

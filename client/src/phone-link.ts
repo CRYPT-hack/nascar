@@ -34,6 +34,8 @@ export class PhoneLink {
   status: PhoneLinkStatus = 'connecting';
   /** Called whenever `code` or `status` changes, so the UI can repaint. */
   onChange: (() => void) | null = null;
+  /** Called once when the player takes their race photo, with a JPEG data URL. */
+  onPhoto: ((dataUrl: string) => void) | null = null;
 
   private ws: WebSocket | null = null;
   private frame: CarInput | null = null;
@@ -110,6 +112,9 @@ export class PhoneLink {
             this.set('waiting');
           }
           break;
+        case 'photo':
+          if (typeof msg['data'] === 'string') this.onPhoto?.(msg['data']);
+          break;
         case 'ctl':
           // Echo the sequence straight back so the phone can time the round
           // trip. Done before anything else in this branch: the point is to
@@ -173,4 +178,13 @@ export function controllerUrl(): string {
   if (typeof location === 'undefined') return '';
   const port = location.port === '5173' ? '8080' : location.port;
   return `${location.protocol}//${location.hostname}${port ? `:${port}` : ''}/controller.html`;
+}
+
+/**
+ * Controller URL with the pairing code embedded as a query param.
+ * Scanning a QR of this URL opens the controller and auto-fills the code,
+ * skipping manual entry entirely.
+ */
+export function controllerUrlWithCode(code: string): string {
+  return `${controllerUrl()}?code=${encodeURIComponent(code)}`;
 }

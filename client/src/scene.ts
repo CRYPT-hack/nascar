@@ -48,6 +48,11 @@ export class CarView {
   private posed = false;
   private roll = 0;
 
+  /** Driver photo above the car, once one exists. */
+  private photo: THREE.Group | null = null;
+  private photoFace: THREE.Mesh | null = null;
+  private readonly photoWorld = new THREE.Vector3();
+
   constructor(colorIndex: number, isLocal: boolean) {
     const model = getCarModel(colorIndex);
     if (model) this.buildModel(model, isLocal);
@@ -174,6 +179,73 @@ export class CarView {
 
   setVisible(v: boolean): void {
     this.group.visible = v;
+  }
+
+  /**
+   * Put the driver's photo on a square above the car.
+   *
+   * Billboarded about Y rather than fixed to the roof: a flat panel lying on
+   * the car is unreadable from behind, which is where the camera spends the
+   * whole race. Turning it to face the viewer keeps every photo legible from
+   * every angle while it stays upright, so the grid still reads as cars with
+   * signs over them rather than a wall of floating stickers.
+   *
+   * Replacing an existing photo reuses the same quad; only the map changes.
+   */
+  setPhoto(texture: THREE.Texture): void {
+    if (!this.photo) {
+      // Roughly the width of the roof, not of the car. At the car's full width
+      // the square is taller than the vehicle and reads as a billboard being
+      // towed rather than a photo on a car.
+      const size = CAR.width * 0.6;
+      const geo = new THREE.PlaneGeometry(size, size);
+      // Backing plate, very slightly larger and behind, so the photo reads as a
+      // card against sky or grass rather than floating pixels.
+      const backing = new THREE.Mesh(
+        new THREE.PlaneGeometry(size * 1.09, size * 1.09),
+        new THREE.MeshBasicMaterial({ color: 0x11151c, side: THREE.DoubleSide }),
+      );
+      backing.position.z = -0.01;
+
+      const face = new THREE.Mesh(
+        geo,
+        // Basic rather than standard: a face lit by the scene's sun goes dark
+        // whenever the car is pointing away from it, which is exactly when you
+        // most need to tell whose car it is.
+        new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide }),
+      );
+
+      this.photo = new THREE.Group();
+      this.photo.add(backing, face);
+      // Bottom edge just clear of the roof, so it sits on the car rather than
+      // floating above it.
+      this.photo.position.y = CAR.height + size * 0.5 + 0.16;
+      this.photoFace = face;
+      this.group.add(this.photo);
+    } else if (this.photoFace) {
+      const mat = this.photoFace.material as THREE.MeshBasicMaterial;
+      mat.map = texture;
+      mat.needsUpdate = true;
+    }
+  }
+
+  get hasPhoto(): boolean {
+    return this.photo !== null;
+  }
+
+  /**
+   * Turn the photo to face the camera. Called once per frame per car.
+   *
+   * Only the yaw is taken: a full lookAt would tip the square over as the
+   * camera rises, and would roll it with the car through a banked corner.
+   */
+  faceCamera(cameraPos: THREE.Vector3): void {
+    if (!this.photo) return;
+    this.group.getWorldPosition(this.photoWorld);
+    const yaw = Math.atan2(cameraPos.x - this.photoWorld.x, cameraPos.z - this.photoWorld.z);
+    // The group carries the car's rotation, so undo it before applying our own.
+    this.photo.quaternion.copy(this.group.quaternion).invert();
+    this.photo.rotateY(yaw);
   }
 }
 
