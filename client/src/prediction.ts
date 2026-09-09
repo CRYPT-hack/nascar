@@ -130,7 +130,22 @@ const MIN_RTT_SAMPLES = 1;
  * MAX_PENDING_INPUTS in shared/constants.ts is 180 - three seconds - which is a
  * sane bound on memory and a useless one on work.
  */
-const MAX_REPLAY_INPUTS = 24;
+const MAX_REPLAY_INPUTS = 12;
+
+/**
+ * Milliseconds of replay a single snapshot may spend.
+ *
+ * A count-based ceiling bounds the work in *steps*, which is only a bound on
+ * time if a step has a fixed price - and it does not. In a pack, a step costs
+ * more (more contact pairs) exactly when the replay is longest (contact is what
+ * breaks agreement), so the two multiply. At the old ceiling of 24 inputs that
+ * is 48 world steps in one synchronous block: two to four whole frames.
+ *
+ * The ceiling is now derived from a measured price per step, so the block is
+ * bounded in the unit that matters. Older inputs beyond the budget are dropped,
+ * which is exactly what the count ceiling already did to them.
+ */
+const REPLAY_BUDGET_MS = 4;
 
 interface Pending {
   seq: number;
@@ -181,6 +196,10 @@ export interface PredictionStats {
   /** Set by reconcile() so a harness can inspect what produced a correction. */
   lastAckSeq: number;
   lastPending: number;
+  /** Measured cost of one replayed step, ms, smoothed. */
+  replayStepMs: number;
+  /** Inputs the time budget refused to replay this snapshot. */
+  replayBudgetDropped: number;
 }
 
 export class PredictedCar {
@@ -208,6 +227,8 @@ export class PredictedCar {
     hardSnaps: 0,
     replayDropped: 0,
     replaySkipped: 0,
+    replayStepMs: 0,
+    replayBudgetDropped: 0,
     lastAckSeq: 0,
     lastPending: 0,
   };
@@ -310,10 +331,19 @@ export class PredictedCar {
       return;
     }
 
-    // Bound the replay. See MAX_REPLAY_INPUTS.
-    if (this.pending.length > MAX_REPLAY_INPUTS) {
-      this.stats.replayDropped += this.pending.length - MAX_REPLAY_INPUTS;
-      this.pending.splice(0, this.pending.length - MAX_REPLAY_INPUTS);
+    // Bound the replay, in time as well as in count. See REPLAY_BUDGET_MS.
+    let cap = MAX_REPLAY_INPUTS;
+    if (this.stats.replayStepMs > 0) {
+      const affordable = Math.floor(REPLAY_BUDGET_MS / this.stats.replayStepMs / TICKS_PER_INPUT);
+      // Always replay something: one input is better than a pure snap, and a
+      // single slow sample must not latch the budget shut.
+      cap = Math.max(2, Math.min(MAX_REPLAY_INPUTS, affordable));
+    }
+    if (this.pending.length > cap) {
+      const dropped = this.pending.length - cap;
+      this.stats.replayDropped += dropped;
+      if (cap < MAX_REPLAY_INPUTS) this.stats.replayBudgetDropped += dropped;
+      this.pending.splice(0, dropped);
     }
 
     const predicted = this.car.readState();
@@ -337,6 +367,7 @@ export class PredictedCar {
 
     // Replay every input the server has not seen yet, for exactly as many
     // steps as it was originally applied for.
+    const replayStart = performance.now();
     let replayed = 0;
     for (const p of this.pending) {
       for (let s = 0; s < p.steps; s++) {
@@ -345,6 +376,24 @@ export class PredictedCar {
         this.car.postStep();
         replayed++;
       }
+      // Re-arm the skip-the-replay fast path.
+      //
+      // `after` is what statesAgree() checks the next snapshot against, and it
+      // was written in exactly one place: forward simulation in fixedStep. So
+      // after any correction every pending input still carried the state from
+      // the timeline that correction just discarded, the comparison was against
+      // a state that no longer existed, and it could not match. One
+      // disagreement therefore latched the fast path off for the rest of the
+      // race - and contact is what produces that first disagreement, because
+      // the client resolves it against ghosts posed 100 ms in the past.
+      if (p.steps >= TICKS_PER_INPUT) p.after = this.car.readState();
+    }
+    if (replayed > 0) {
+      const perStep = (performance.now() - replayStart) / replayed;
+      // Smoothed, because one descheduled frame should not shrink the budget
+      // for the rest of the race.
+      this.stats.replayStepMs =
+        this.stats.replayStepMs === 0 ? perStep : this.stats.replayStepMs * 0.8 + perStep * 0.2;
     }
 
     const after = this.car.readState();

@@ -64,7 +64,12 @@ export class CarView {
       const pivot = new THREE.Object3D();
       pivot.position.copy(w.position);
       const tyre = new THREE.Mesh(w.geometry, bodyMaterial);
-      tyre.castShadow = true;
+      // The wheels do not cast. They sit inside the arches, so their shadow is
+      // already inside the body's own, and each car was otherwise five separate
+      // casters. A pack of ten fits entirely inside the 180 m shadow box at
+      // once - which is exactly why the cost appeared when cars closed up - so
+      // this takes the shadow pass from 50 draws to 10.
+      tyre.castShadow = false;
       pivot.add(tyre);
       this.group.add(pivot);
       // Front pair first, so setSteer keeps addressing 0 and 1.

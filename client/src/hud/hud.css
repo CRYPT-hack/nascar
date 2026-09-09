@@ -502,10 +502,12 @@
   visibility: hidden;
 }
 
-/* Transient notice, above the reset button so the two never collide. */
+/* Transient notice. Bottom-left is a stack, lowest first: reset at 26, the
+   mute toggle at 76, this at 126. It sat at 74 and landed on top of the mute
+   button, which arrived from the other instance at 76. */
 .hud-notice {
   position: absolute;
-  bottom: 74px;
+  bottom: 126px;
   left: 26px;
   padding: 8px 14px;
   border-radius: 10px;
