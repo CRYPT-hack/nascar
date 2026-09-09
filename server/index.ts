@@ -13,7 +13,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { DEFAULT_PORT, MAX_PLAYERS, RACE_LAPS } from '../shared/constants';
+import { DEFAULT_PORT, MAX_PLAYERS, RACE_LAPS, TICK_HZ } from '../shared/constants';
 import { validateTrack, type TrackData } from '../shared/track-schema';
 import { initPhysics } from '../vehicle/world';
 import { GameServer } from './net';
@@ -45,6 +45,46 @@ function clampCount(raw: string | undefined, fallback: number, max: number): num
     return fallback;
   }
   return Math.min(n, max);
+}
+
+/**
+ * Tell the host when the grid they chose is too big for the machine they are on.
+ *
+ * Simulation cost is linear in the number of cars — about 0.68 ms per car on a
+ * thermally throttled laptop, nearer a tenth of that on a healthy one — so the
+ * largest grid that holds 60 Hz is a property of the hardware, not of the game.
+ * A number picked here would be wrong on somebody else's machine.
+ *
+ * The room already records every tick duration, so this measures the real thing
+ * under the real field rather than probing at startup and guessing. Said once,
+ * because a warning repeated every ten seconds is a warning nobody reads.
+ */
+function watchTickBudget(server: GameServer): void {
+  const budget = 1000 / TICK_HZ;
+  let warned = false;
+
+  const timer = setInterval(() => {
+    if (warned) return;
+    const recent = server.room.tickMs.slice(-TICK_HZ * 5);
+    // Only meaningful once a field is actually running: an idle lobby is cheap
+    // whatever the grid size is set to.
+    if (recent.length < TICK_HZ * 4 || server.room.carCount < 2) return;
+
+    const sorted = [...recent].sort((a, b) => a - b);
+    const p95 = sorted[Math.floor(sorted.length * 0.95)]!;
+    if (p95 <= budget) return;
+
+    warned = true;
+    console.warn(
+      `\ntick is overrunning: p95 ${p95.toFixed(1)} ms against a ${budget.toFixed(1)} ms budget ` +
+        `with ${server.room.carCount} cars.`,
+    );
+    console.warn(
+      `the race will still run, but the server is no longer holding 60 Hz. ` +
+        `restart with a smaller CARS to fix it.`,
+    );
+  }, 5000);
+  timer.unref?.();
 }
 
 async function main(): Promise<void> {
@@ -83,6 +123,7 @@ async function main(): Promise<void> {
   console.log(`grid: up to ${cars} cars`);
   if (aiFill > 0) console.log(`  filled to ${aiFill} with AI when the race starts`);
   server.start();
+  watchTickBudget(server);
 
   const shutdown = () => {
     console.log('\nshutting down');

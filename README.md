@@ -48,18 +48,46 @@ from the game server itself — one process, one port, one URL to type (§9).
 
 Server environment: `PORT`, `TRACK`, `LAPS`, `CARS`, `AI_FILL`.
 
-`CARS` is the size of the grid — use it when fewer than ten people turn up. It
-caps how many can join and is itself capped by the number of spawn slots.
-`AI_FILL` tops the grid up with AI when the race starts, and is clamped to
-`CARS` so the two settings cannot contradict each other.
+`CARS` is the size of the grid: **any number from 1 to 25**. It caps how many can
+join and is itself capped by the spawn slots the track provides. `AI_FILL` tops
+the grid up with AI when the race starts, and is clamped to `CARS` so the two
+settings cannot contradict each other.
 
 ```bash
-CARS=6 npm run server              # a six-car race, humans only
-CARS=6 AI_FILL=6 npm run server    # four people show up, two AI fill the grid
+CARS=6 npm run server               # a six-car race, humans only
+CARS=6 AI_FILL=6 npm run server     # four people show up, two AI fill the grid
+CARS=25 AI_FILL=25 npm run server   # a full grid, if the machine can hold it
 ```
 
 Anything unusable in either falls back to the default with a warning rather than
 producing a zero-car grid.
+
+### How many cars this machine can actually race
+
+The ceiling is the hardware, not the code, so nothing is hardcoded to one number.
+Simulation cost is **linear** in the car count — Rapier's broad-phase is not the
+problem — at roughly 0.28 ms fixed plus a per-car cost that depends entirely on
+the machine.
+
+```bash
+npx tsx tools/cpubench.ts     # is this machine throttling? run this first
+npx tsx tools/gridscale.ts    # the cost curve, and the largest grid that fits
+```
+
+`gridscale` prints ms/step at several grid sizes and the largest that fits the
+16.67 ms budget. On a thermally throttled laptop measuring 7.06 ms for a ten-car
+step — against the ~1 ms a healthy machine gives — the marginal cost was 0.68 ms
+per car and 23 cars fit; scaled to a machine that is not throttling, 25 sits
+well inside budget.
+
+You do not have to run either. The server watches its own tick and says so once
+if the grid you chose does not hold 60 Hz on the machine you are on:
+
+```
+tick is overrunning: p95 20.8 ms against a 16.7 ms budget with 25 cars.
+the race will still run, but the server is no longer holding 60 Hz.
+restart with a smaller CARS to fix it.
+```
 
 The `server` script passes `--max-old-space-size=96`. Without it V8 grows its
 heap to absorb snapshot serialisation and RSS climbs to ~167 MB before

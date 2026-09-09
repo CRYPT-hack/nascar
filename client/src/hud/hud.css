@@ -532,6 +532,27 @@
   display: flex;
   flex-direction: column;
   padding: 9px 12px 10px;
+  /* A 25-car field is taller than the screen. Bounded and scrollable rather
+     than allowed to run off the bottom over the sound and reset buttons. */
+  max-height: calc(100vh - 260px);
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+/* The heading has to stay put while the order scrolls under it. */
+.hud-board .hud-label {
+  position: sticky;
+  top: 0;
+  background: var(--scrim);
+  z-index: 1;
+  margin: -2px 0 3px;
+  padding: 2px 0;
+}
+
+/* Big fields get tighter rows, so more of the order is visible at once. */
+.hud-board.dense .board-row {
+  font-size: 11.5px;
+  padding: 1px 0;
 }
 
 .hud-board[hidden] {

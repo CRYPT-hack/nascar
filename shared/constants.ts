@@ -55,7 +55,16 @@ export const CAR = {
 // Race
 // ---------------------------------------------------------------------------
 
-export const MAX_PLAYERS = 10;
+/**
+ * Largest grid the game will run.
+ *
+ * Raised from 10. The ceiling is the server's fixed-step tick, not anything in
+ * the protocol: see CHANGELOG-SHARED.md for the measured cost per car and the
+ * headroom left at this size. The spawn grid in every track is generated to
+ * this many slots, so a track built before the change has fewer and the room
+ * bounds itself by `track.spawnGrid.length`.
+ */
+export const MAX_PLAYERS = 25;
 export const RACE_LAPS = 3;
 
 /** Countdown duration once the grid is formed, in seconds. */
@@ -123,6 +132,24 @@ export const CAR_COLORS = [
   0xff375f, // magenta
   0xf2f2f7, // bone
   0x1c1c1e, // graphite
+  // Beyond ten the field is large enough that two cars of similar hue will be
+  // on screen together, so these are spread by lightness as well as hue —
+  // "the dark green one" has to be sayable across a room.
+  0x00c7a9, // jade
+  0x8e5b3f, // rust
+  0x9ecb2f, // lime
+  0x5e5ce6, // indigo
+  0xff6482, // coral
+  0x00838f, // teal
+  0xc9a227, // brass
+  0x7d3c98, // plum
+  0x4a6572, // slate
+  0xe0620d, // tangerine
+  0x2d6a4f, // pine
+  0xd6a2e8, // lilac
+  0x6b705c, // olive
+  0xf7b2ad, // blush
+  0x0f4c81, // navy
 ] as const;
 
 export const CAR_COLOR_NAMES = [
@@ -136,4 +163,19 @@ export const CAR_COLOR_NAMES = [
   'Magenta',
   'Bone',
   'Graphite',
+  'Jade',
+  'Rust',
+  'Lime',
+  'Indigo',
+  'Coral',
+  'Teal',
+  'Brass',
+  'Plum',
+  'Slate',
+  'Tangerine',
+  'Pine',
+  'Lilac',
+  'Olive',
+  'Blush',
+  'Navy',
 ] as const;

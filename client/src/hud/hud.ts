@@ -285,6 +285,9 @@ export class Hud {
       this.boardRows.delete(id);
     }
     this.board.hidden = rows.length === 0;
+    // Past a dozen cars the list is long enough that row height matters more
+    // than legibility of any single row.
+    this.toggle('boardDense', this.board, 'dense', rows.length > 12);
   }
 
   /**

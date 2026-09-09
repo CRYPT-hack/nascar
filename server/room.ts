@@ -221,6 +221,11 @@ export class Room {
   // Roster
   // -------------------------------------------------------------------------
 
+  /** Cars currently simulated, humans and AI alike. */
+  get carCount(): number {
+    return this.entrants.size;
+  }
+
   get humanCount(): number {
     let n = 0;
     for (const e of this.entrants.values()) if (!e.ai) n++;

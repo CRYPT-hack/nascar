@@ -136,11 +136,20 @@ Captured on the phone in the lobby, relayed to the laptop, uploaded over HTTP,
 polled by every client, and drawn billboarded above the car. `shared/protocol.ts`
 untouched.
 
-### ~~Grid size~~ — done
+### ~~Grid size~~ — done, and raised to 25
 
-`CARS` sets how many cars race, for when fewer than ten people turn up. The
-`Room` already accepted `maxPlayers`; the server entry simply never exposed it.
-`AI_FILL` is clamped to it so the two cannot contradict.
+`CARS` sets how many cars race — any number from 1 to 25. `AI_FILL` is clamped
+to it so the two cannot contradict.
+
+`MAX_PLAYERS` went from 10 to 25, which is a change to the frozen
+`shared/constants.ts` and is logged in CHANGELOG-SHARED.md. The colour list grew
+to match, and the spawn grid is now generated to `MAX_PLAYERS` slots.
+
+The ceiling is the machine, not the code: cost is linear at ~0.68 ms per car on
+a throttled laptop and around a seventh of that on a healthy one. Rather than
+hardcode a number that would be wrong elsewhere, `tools/gridscale.ts` measures
+the curve and the server warns once if the chosen grid does not hold 60 Hz on
+the machine it is running on.
 
 ### Not started, in my scope
 
@@ -181,13 +190,24 @@ Nothing outstanding.
   over the relay, and killing it mid-drive released the throttle immediately
   rather than holding the last input. Angle mapping checked against hand
   calculations at several tilts. HTTPS and WSS verified with generated certs.
+- A 25-car field: 25 of 25 AI finish a lap, contact clean (worst attitude 0.98,
+  greatest height 0.21 m, zero frames above 1.1 m), all 25 spawn slots on asphalt
+  with 4.8 m to the road edge, 25 leaderboard rows scrolling in dense mode, and
+  25 colour choices offered. The tick-budget warning fires correctly at that size
+  on this machine.
 - A live ten-car grid: positions render correctly through the HUD (P6/10,
   updating as the field moves), and the frame budget holds at **6.9 ms median,
   7.7 ms p95** with ten cars, prediction and interpolation — inside 16.67 ms.
 
 **Not verified:**
 
-- Frame timings and latency figures are from this machine only.
+- Frame timings and latency figures are from this machine only, and this machine
+  is thermally throttled: `cpubench` reads 7.06 ms for a ten-car step against the
+  ~1 ms a healthy machine gives. Every absolute timing here is a lower bound.
+- **A 25-car field has never been seen rendered.** The browser pane stopped
+  compositing (`document.hidden`, zero rAF frames), so the server side, the
+  leaderboard and the contact behaviour were all verified at 25 but the drawn
+  scene and the client frame rate at that size were not.
 - **The controller has never run on a real phone.** Everything was verified with
   synthetic `deviceorientation` events on desktop and a node client. The tilt
   ranges, the deadzone and the smoothing are reasoned defaults, not tuned
