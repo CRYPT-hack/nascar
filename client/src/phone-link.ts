@@ -179,3 +179,12 @@ export function controllerUrl(): string {
   const port = location.port === '5173' ? '8080' : location.port;
   return `${location.protocol}//${location.hostname}${port ? `:${port}` : ''}/controller.html`;
 }
+
+/**
+ * Controller URL with the pairing code embedded as a query param.
+ * Scanning a QR of this URL opens the controller and auto-fills the code,
+ * skipping manual entry entirely.
+ */
+export function controllerUrlWithCode(code: string): string {
+  return `${controllerUrl()}?code=${encodeURIComponent(code)}`;
+}

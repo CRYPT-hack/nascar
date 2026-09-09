@@ -499,9 +499,13 @@ recalBtn.addEventListener('click', calibrate);
 screen.orientation?.addEventListener('change', () => setTimeout(calibrate, 250));
 
 // A code can be carried in the URL, so the laptop can show a QR that skips
-// typing entirely.
+// typing entirely. When present, auto-submit so the player just scans and goes.
 const fromUrl = new URLSearchParams(location.search).get('code');
-if (fromUrl) codeInput.value = fromUrl.toUpperCase().slice(0, 4);
+if (fromUrl) {
+  codeInput.value = fromUrl.toUpperCase().slice(0, 4);
+  // Defer slightly so the page has fully rendered before triggering sensors.
+  setTimeout(() => startBtn.click(), 300);
+}
 
 if (!window.isSecureContext) {
   setupMsg.textContent =
